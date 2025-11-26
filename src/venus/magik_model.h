@@ -9,6 +9,7 @@
 #include "tensor.h"
 #include <vector>
 #include <string>
+#include <map>
 
 namespace magik {
 namespace venus {
@@ -47,7 +48,7 @@ public:
 class TensorXWrapper {
 public:
     TensorX *tensorx;
-    
+
     TensorXWrapper();
     TensorXWrapper(TensorX *tx);
     ~TensorXWrapper();
@@ -90,6 +91,7 @@ public:
      * Layout:
      * - Offset 0x00-0x0b: basic fields (level, width, height)
      * - Offset 0x0c: std::vector<TensorXWrapper*> tensors_
+     * - Offset 0x18-0x1f: reserved/padding
      * - Offset 0x20: std::map for input tensors
      * - Offset 0x38: std::map for output tensors
      */
@@ -99,8 +101,18 @@ public:
         int height;
         std::vector<TensorXWrapper*> tensors_;  // At offset 0x0c
 
+        /* Padding/reserved so that maps line up with OEM offsets */
+        char reserved_[0x08];
+
+        /* Name -> tensor wrapper maps (offsets 0x20 and 0x38) */
+        std::map<std::string, TensorXWrapper*> input_tensors_;
+        std::map<std::string, TensorXWrapper*> output_tensors_;
+
         TensorXWrapper* get_tensor_wrapper(std::string &name) const;
     };
+
+    static_assert(sizeof(PyramidConfig) == 0x50,
+                  "PyramidConfig size must match OEM (0x50 bytes)");
 
     MagikModelBase(long long param1, long long param2, void *&param3, void *param4,
                    ModelMemoryInfoManager::MemAllocMode mode, ModuleMode module_mode);

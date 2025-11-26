@@ -109,9 +109,15 @@ void* load_mgk_model(const char *path) {
     fflush(stdout);
 
     try {
+        printf("About to call create_fn...\n");
+        fflush(stdout);
+
         loader->model_instance = create_fn(__oram_vbase, __ddr_vbase, nullptr, nullptr);
 
         printf("create() returned: %p\n", (void*)loader->model_instance);
+        fflush(stdout);
+
+        printf("After fflush, before NULL check\n");
         fflush(stdout);
 
         if (!loader->model_instance) {
@@ -142,11 +148,7 @@ void* load_mgk_model(const char *path) {
     }
 
     printf("load_mgk_model: About to return loader=%p\n", (void*)loader);
-    fflush(stdout); catch (...) {
-        fprintf(stderr, "load_mgk_model: Unknown exception\n");
-        delete loader;
-        return nullptr;
-    }
+    fflush(stdout);
 
     return loader;
 }

@@ -12,17 +12,50 @@
 namespace magik {
 namespace venus {
 
-/* Internal tensor representation */
+/* Internal tensor representation
+ * OEM size: 0x44 (68 bytes)
+ * Layout reconstructed from libmert.so / .mgk usage:
+ *   - [0x00] int32_t* dims_begin
+ *   - [0x04] int32_t* dims_end
+ *   - [0x08] void*    reserved0
+ *   - [0x0C] void*    data        (was MBuffer* in OEM; we treat as raw data ptr)
+ *   - [0x10] void*    reserved1   (shared_ptr control block in OEM)
+ *   - [0x14] int32_t  ref_count
+ *   - [0x18] void*    dims_meta0
+ *   - [0x1C] void*    dims_meta1
+ *   - [0x20] void*    dims_meta2
+ *   - [0x24] uint32_t align       (64 for NNA)
+ *   - [0x28] DataType dtype
+ *   - [0x2C] TensorFormat format
+ *   - [0x30] uint32_t bytes       (logical size in bytes)
+ *   - [0x34] uint32_t owns_data   (non-zero if this TensorX owns data)
+ *   - [0x38] int32_t  reserved3
+ *   - [0x3C] uint32_t data_offset (used by vdata<char>)
+ *   - [0x40] int32_t  reserved4
+ */
 struct TensorX {
-    shape_t shape;
-    DataType dtype;
-    TensorFormat format;
-    void *data;
-    size_t bytes;
-    bool owns_data;
-    int ref_count;
+    int32_t *dims_begin;   /* 0x00 */
+    int32_t *dims_end;     /* 0x04 */
+    void    *reserved0;    /* 0x08 */
+    void    *data;         /* 0x0C */
+    void    *reserved1;    /* 0x10 */
+    int32_t  ref_count;    /* 0x14 */
+    void    *dims_meta0;   /* 0x18 */
+    void    *dims_meta1;   /* 0x1C */
+    void    *dims_meta2;   /* 0x20 */
+    uint32_t align;        /* 0x24 */
+    DataType dtype;        /* 0x28 */
+    TensorFormat format;   /* 0x2C */
+    uint32_t bytes;        /* 0x30 */
+    uint32_t owns_data;    /* 0x34 */
+    int32_t  reserved3;    /* 0x38 */
+    uint32_t data_offset;  /* 0x3C */
+    int32_t  reserved4;    /* 0x40 */
 
     TensorX();  /* Constructor - implemented in tensor.cpp */
+    ~TensorX();  /* Destructor */
+    TensorX(const TensorX &other);  /* Copy constructor */
+    TensorX& operator=(const TensorX &other);  /* Copy assignment */
 
     /* Step function required by .mgk models */
     int step(int dim) const;
@@ -30,7 +63,13 @@ struct TensorX {
 
     /* Get bytes size */
     size_t get_bytes_size() const;
+
+    /* Helpers for our Tensor wrapper */
+    void set_shape(const shape_t &shape);
+    shape_t get_shape() const;
 };
+
+static_assert(sizeof(TensorX) == 0x44, "TensorX size must match OEM (0x44 bytes)");
 
 /* Tensor class matching Venus API */
 class Tensor {
