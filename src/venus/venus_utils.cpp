@@ -69,11 +69,35 @@ DataType string2data_type(const std::string &str) {
     return DataType::NONE;
 }
 
+/* Overload that takes by value for ABI compatibility */
+DataType string2data_type(std::string str) {
+    if (str == "FP32") return DataType::FP32;
+    if (str == "UINT32") return DataType::UINT32;
+    if (str == "INT32") return DataType::INT32;
+    if (str == "UINT16") return DataType::UINT16;
+    if (str == "INT16") return DataType::INT16;
+    if (str == "UINT8") return DataType::UINT8;
+    if (str == "INT8") return DataType::INT8;
+    if (str == "UINT4B") return DataType::UINT4B;
+    if (str == "UINT2B") return DataType::UINT2B;
+    if (str == "BOOL") return DataType::BOOL;
+    return DataType::NONE;
+}
+
 /* Data format utilities */
 std::string data_format2string(TensorFormat fmt) {
     switch (fmt) {
         case TensorFormat::NHWC: return "NHWC";
         case TensorFormat::NV12: return "NV12";
+        default: return "UNKNOWN";
+    }
+}
+
+/* Overload for DataFormat (backward compatibility) */
+std::string data_format2string(DataFormat fmt) {
+    switch (fmt) {
+        case DataFormat::NHWC: return "NHWC";
+        case DataFormat::NV12: return "NV12";
         default: return "UNKNOWN";
     }
 }
@@ -84,8 +108,23 @@ TensorFormat string2data_format(const std::string &str) {
     return TensorFormat::NHWC;  /* Default */
 }
 
+/* Overload that takes by value for ABI compatibility */
+TensorFormat string2data_format(std::string str) {
+    if (str == "NHWC") return TensorFormat::NHWC;
+    if (str == "NV12") return TensorFormat::NV12;
+    return TensorFormat::NHWC;  /* Default */
+}
+
 /* Channel layout utilities */
 ChannelLayout string2channel_layout(const std::string &str) {
+    if (str == "RGB") return ChannelLayout::RGB;
+    if (str == "BGR") return ChannelLayout::BGRA;  /* Use BGRA as closest match */
+    if (str == "GRAY") return ChannelLayout::GRAY;
+    return ChannelLayout::NONE;
+}
+
+/* Overload that takes by value for ABI compatibility */
+ChannelLayout string2channel_layout(std::string str) {
     if (str == "RGB") return ChannelLayout::RGB;
     if (str == "BGR") return ChannelLayout::BGRA;  /* Use BGRA as closest match */
     if (str == "GRAY") return ChannelLayout::GRAY;

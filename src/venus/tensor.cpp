@@ -11,6 +11,16 @@
 namespace magik {
 namespace venus {
 
+/* TensorX constructor */
+TensorX::TensorX()
+    : dtype(DataType::INT8),
+      format(TensorFormat::NHWC),
+      data(nullptr),
+      bytes(0),
+      owns_data(false),
+      ref_count(1) {
+}
+
 /* TensorX step function (const) */
 int TensorX::step(int dim) const {
     if (dim < 0 || dim >= (int)shape.size()) {
@@ -35,6 +45,11 @@ int TensorX::step(int dim) {
         step *= shape[i];
     }
     return step;
+}
+
+/* TensorX get_bytes_size */
+size_t TensorX::get_bytes_size() const {
+    return bytes;
 }
 
 /* Constructor with shape */

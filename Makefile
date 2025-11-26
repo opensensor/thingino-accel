@@ -20,7 +20,7 @@ BIN_DIR := $(BUILD_DIR)/bin
 # Compiler flags
 CFLAGS := -Wall -Wextra -O2 -fPIC
 CFLAGS += -I$(INC_DIR) -I$(SRC_DIR)
-CXXFLAGS := -Wall -Wextra -O2 -fPIC -std=c++14
+CXXFLAGS := -Wall -Wextra -O2 -fPIC -std=c++14 -D_GLIBCXX_USE_CXX11_ABI=1
 CXXFLAGS += -I$(INC_DIR) -I$(SRC_DIR)
 LDFLAGS := -L$(LIB_DIR)
 LIBS := -lpthread -lstdc++ -ldl

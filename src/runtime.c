@@ -5,8 +5,10 @@
  */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+#include <pthread.h>
 #include <sys/ioctl.h>
 
 #include "nna.h"
@@ -16,6 +18,19 @@
 void *oram_base = NULL;
 void *__oram_vbase = NULL;
 void *__ddr_pbase = NULL;
+void *__ddr_vbase = NULL;
+void *__nndma_io_vbase = NULL;
+void *__nndma_desram_vbase = NULL;
+
+/* Global variables needed by .mgk models */
+int l2cache_size = 256 * 1024;  /* 256KB L2 cache */
+pthread_mutex_t net_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+/* Standard library functions that may be missing */
+void __assert(const char *func, const char *file, int line, const char *expr) {
+    fprintf(stderr, "Assertion failed: %s (%s: %s: %d)\n", expr, file, func, line);
+    abort();
+}
 
 /* Initialize runtime environment */
 int nna_runtime_init(void) {

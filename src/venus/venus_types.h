@@ -19,6 +19,12 @@ enum class TensorFormat : int {
     NV12 = 5,  /* YUV 4:2:0 format */
 };
 
+/* DataFormat - separate enum for backward compatibility with old .mgk models */
+enum class DataFormat : int {
+    NHWC = 1,
+    NV12 = 5,
+};
+
 /* Data type */
 enum class DataType : int {
     NONE = -1,
@@ -66,11 +72,14 @@ namespace utils {
     int data_type2validbits(DataType dtype);
     std::string data_type2string(DataType dtype);
     DataType string2data_type(const std::string &str);
+    DataType string2data_type(std::string str);  /* By-value overload */
 
     std::string data_format2string(TensorFormat fmt);
     TensorFormat string2data_format(const std::string &str);
+    TensorFormat string2data_format(std::string str);  /* By-value overload */
 
     ChannelLayout string2channel_layout(const std::string &str);
+    ChannelLayout string2channel_layout(std::string str);  /* By-value overload */
 
     /* Template for C++ type to DataType conversion */
     template<typename T> DataType type2data_type();

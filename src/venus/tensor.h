@@ -22,12 +22,14 @@ struct TensorX {
     bool owns_data;
     int ref_count;
 
-    TensorX() : dtype(DataType::INT8), format(TensorFormat::NHWC),
-                data(nullptr), bytes(0), owns_data(false), ref_count(1) {}
+    TensorX();  /* Constructor - implemented in tensor.cpp */
 
     /* Step function required by .mgk models */
     int step(int dim) const;
     int step(int dim);  /* Non-const version also needed */
+
+    /* Get bytes size */
+    size_t get_bytes_size() const;
 };
 
 /* Tensor class matching Venus API */
