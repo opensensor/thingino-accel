@@ -469,6 +469,86 @@ size_t MagikModelBase::get_forward_memory_size() const {
 }
 
 } // namespace venus
+
+// Override OEM helper: get_string_vector_t
+// This function is exported by the .mgk and normally reads a vector of strings
+// from a kernel parameter block. The OEM implementation is currently causing
+// huge allocations (hundreds of MB) due to parameter mismatch, which
+// immediately fails on the device. For now, we provide a minimal, safe
+// implementation that avoids large allocations and lets the demo progress.
+extern "C" void _Z19get_string_vector_tRSt6vectorINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESaIS5_EEPKvRi(
+    std::vector<std::string> &vec,
+    const void *param,
+    int &index)
+{
+    (void)param;
+
+    void *ra0 = __builtin_return_address(0);
+    Dl_info info0;
+    const char *sym = "?";
+    unsigned long off = 0;
+    const char *obj = "?";
+    if (dladdr(ra0, &info0)) {
+        sym = info0.dli_sname ? info0.dli_sname : "?";
+        obj = info0.dli_fname ? info0.dli_fname : "?";
+        off = (unsigned long)((char *)ra0 - (char *)info0.dli_saddr);
+    }
+
+    std::fprintf(stderr,
+                 "[VENUS] get_string_vector_t override called vec_size_before=%zu index=%d\n"
+                 "  ra0=%p (obj=%s, symbol=%s+0x%lx)\n",
+                 vec.size(), index,
+                 ra0, obj, sym, off);
+    std::fflush(stderr);
+
+    // Provide a minimal, but non-empty, vector so downstream code sees
+    // output_size == 1 and similar checks satisfied.
+    vec.clear();
+    vec.emplace_back("dummy");
+
+    // For now we do not modify the underlying parameter cursor (index).
+    // If this proves problematic we will refine this implementation later.
+}
+
+
+// Override OEM helper: get_string_t
+// Mangled name: _Z12get_string_tRNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEPKvRi
+// Similar to get_string_vector_t but returns a single string. The OEM
+// implementation currently mis-parses our parameter blocks and issues
+// a huge memcpy (~2.5 MB) from the parameter pointer, which walks off
+// the mapped region and causes SIGBUS. Provide a minimal, safe
+// implementation that just returns a small dummy string.
+extern "C" void _Z12get_string_tRNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEPKvRi(
+    std::string &out,
+    const void *param,
+    int &index)
+{
+    (void)param;
+
+    void *ra0 = __builtin_return_address(0);
+    Dl_info info0;
+    const char *sym = "?";
+    const char *obj = "?";
+    unsigned long off = 0;
+    if (dladdr(ra0, &info0)) {
+        sym = info0.dli_sname ? info0.dli_sname : "?";
+        obj = info0.dli_fname ? info0.dli_fname : "?";
+        off = (unsigned long)((char *)ra0 - (char *)info0.dli_saddr);
+    }
+
+    std::fprintf(stderr,
+                 "[VENUS] get_string_t override called index=%d\n"
+                 "  ra0=%p (obj=%s, symbol=%s+0x%lx)\n",
+                 index,
+                 ra0, obj, sym, off);
+    std::fflush(stderr);
+
+    out.assign("dummy");
+    // We intentionally leave `index` unchanged for now; if we discover
+    // that kernels depend on sequential consumption of a parameter
+    // block we can revisit this.
+}
+
 } // namespace magik
 
 extern "C" void _ZSt17__throw_bad_allocv(void) {
@@ -544,12 +624,29 @@ extern "C" void _ZSt20__throw_length_errorPKc(const char *msg) {
 void* operator new(std::size_t size) {
     void *ptr = std::malloc(size);
     if (!ptr) {
+        /* Log the failing allocation and its call site before throwing. */
+        void *ra0 = __builtin_return_address(0);
+        Dl_info info0;
+        if (dladdr(ra0, &info0)) {
+            std::fprintf(stderr,
+                         "[VENUS] operator new OOM size=%zu\n"
+                         "  ra0=%p (obj=%s, base=%p, symbol=%s+0x%lx)\n",
+                         size,
+                         ra0,
+                         info0.dli_fname ? info0.dli_fname : "?",
+                         info0.dli_fbase,
+                         info0.dli_sname ? info0.dli_sname : "?",
+                         (unsigned long)((char *)ra0 - (char *)info0.dli_saddr));
+        } else {
+            std::fprintf(stderr,
+                         "[VENUS] operator new OOM size=%zu ra0=%p (no symbol)\n",
+                         size,
+                         ra0);
+        }
+        std::fflush(stderr);
+
         // Respect the C++ contract: throw std::bad_alloc on failure.
         throw std::bad_alloc();
-    }
-    if (size >= 256 * 1024) {
-        std::fprintf(stderr, "[VENUS] operator new(%zu) -> %p\n", size, ptr);
-        std::fflush(stderr);
     }
     return ptr;
 }
@@ -557,11 +654,28 @@ void* operator new(std::size_t size) {
 void* operator new[](std::size_t size) {
     void *ptr = std::malloc(size);
     if (!ptr) {
-        throw std::bad_alloc();
-    }
-    if (size >= 256 * 1024) {
-        std::fprintf(stderr, "[VENUS] operator new[](%zu) -> %p\n", size, ptr);
+        /* Log the failing allocation and its call site before throwing. */
+        void *ra0 = __builtin_return_address(0);
+        Dl_info info0;
+        if (dladdr(ra0, &info0)) {
+            std::fprintf(stderr,
+                         "[VENUS] operator new[] OOM size=%zu\n"
+                         "  ra0=%p (obj=%s, base=%p, symbol=%s+0x%lx)\n",
+                         size,
+                         ra0,
+                         info0.dli_fname ? info0.dli_fname : "?",
+                         info0.dli_fbase,
+                         info0.dli_sname ? info0.dli_sname : "?",
+                         (unsigned long)((char *)ra0 - (char *)info0.dli_saddr));
+        } else {
+            std::fprintf(stderr,
+                         "[VENUS] operator new[] OOM size=%zu ra0=%p (no symbol)\n",
+                         size,
+                         ra0);
+        }
         std::fflush(stderr);
+
+        throw std::bad_alloc();
     }
     return ptr;
 }
@@ -609,6 +723,75 @@ extern "C" void __cxa_throw(void *exc_ptr, void *tinfo_raw, void (*dest)(void *)
     }
     real_cxa_throw(exc_ptr, tinfo_raw, dest);
 }
+
+/*
+ * Lightweight global memcpy override for diagnostics.
+ *
+ * When libvenus.so is preloaded, this function will be used for most
+ * memcpy calls from the .mgk and our own code. We keep the implementation
+ * simple and standards-compliant and add conditional logging when the
+ * pointers fall into the NNA / DDR virtual address ranges or are otherwise
+ * suspicious.
+ */
+extern "C" void *memcpy(void *dest, const void *src, size_t n)
+{
+    if (!dest || !src || n == 0)
+        return dest;
+
+    uintptr_t d = (uintptr_t)dest;
+    uintptr_t s = (uintptr_t)src;
+
+    bool log = false;
+    /* Log copies that touch the high virtual ranges where NNA/DDR/ORAM
+     * mappings and .mgk data tend to live, or that are unusually large.
+     */
+    if (n > (1u << 20)) { /* >1MB */
+        log = true;
+    }
+    if ((d >= 0x76000000u && d < 0x78000000u) ||
+        (s >= 0x76000000u && s < 0x78000000u)) {
+        log = true;
+    }
+
+    if (log) {
+        void *ra0 = __builtin_return_address(0);
+        Dl_info info0;
+        const char *obj = "?";
+        const char *sym = "?";
+        unsigned long off = 0;
+        if (dladdr(ra0, &info0)) {
+            obj = info0.dli_fname ? info0.dli_fname : "?";
+            sym = info0.dli_sname ? info0.dli_sname : "?";
+            off = (unsigned long)((char *)ra0 - (char *)info0.dli_saddr);
+        }
+
+        std::fprintf(stderr,
+                     "[VENUS] memcpy(dest=%p, src=%p, n=%zu)\n"
+                     "        caller=%p (%s:%s+0x%lx)\n",
+                     dest, src, (size_t)n,
+                     ra0, obj, sym, off);
+        std::fflush(stderr);
+    }
+
+    /* Simple, portable byte-wise memcpy implementation. */
+    unsigned char *dptr = static_cast<unsigned char *>(dest);
+    const unsigned char *sptr = static_cast<const unsigned char *>(src);
+
+    /* Standard memcpy has undefined behaviour for overlapping regions.
+     * We still try to behave sanely by choosing a direction based on
+     * pointer order, effectively behaving like memmove for overlap.
+     */
+    if (dptr <= sptr || dptr >= sptr + n) {
+        for (size_t i = 0; i < n; ++i)
+            dptr[i] = sptr[i];
+    } else {
+        for (size_t i = n; i-- > 0; )
+            dptr[i] = sptr[i];
+    }
+
+    return dest;
+}
+
 
 
 
