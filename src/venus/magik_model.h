@@ -98,6 +98,20 @@ public:
                    ModelMemoryInfoManager::MemAllocMode mode, ModuleMode module_mode);
     virtual ~MagikModelBase();
 
+    /* Member variables - matching OEM libmert.so layout
+     * Based on reverse engineering:
+     * - Offset 0x04: vtable pointer (automatic)
+     * - Offset 0x10: inputs_ vector
+     * - Offset 0x1c: outputs_ vector
+     * - Offset 0x34: pyramid_configs_ vector
+     */
+    char padding_[0x0c];  // Padding from 0x04 to 0x10
+    std::vector<TensorXWrapper*> inputs_;      // At offset 0x10
+    std::vector<TensorXWrapper*> outputs_;     // At offset 0x1c
+    char padding2_[0x0c];  // Padding from 0x28 to 0x34
+    std::vector<PyramidConfig*> pyramid_configs_;  // At offset 0x34
+    std::vector<MagikLayerBase*> layers_;
+    PyramidConfig *main_pyramid_config_;
     virtual int run();
     virtual int reshape();
     virtual int pre_graph_run();
@@ -107,6 +121,8 @@ public:
     virtual int open_mnni_profiler();
     virtual int set_main_pyramid_config(int level);
     virtual int create_and_add_pyramid_config();
+    virtual int add_pyramid_config(PyramidConfig *config);
+    virtual PyramidConfig* get_main_pyramid_config();
 
     virtual int build_tensors(PyramidConfig *config, std::vector<TensorInfo> infos);
     virtual int update_cache_buffer_ptr(std::vector<MagikLayerBase*> layers, void *ptr);

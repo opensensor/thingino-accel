@@ -84,71 +84,45 @@ void* load_mgk_model(const char *path) {
     printf("load_mgk_model: dlopen succeeded\n");
     fflush(stdout);
 
-    /* Look for DerivedMagikModel constructor */
-    printf("load_mgk_model: Looking for constructor symbol...\n");
+    /* Look for the 'create' function - .mgk models export this as a C function */
+    printf("load_mgk_model: Looking for 'create' function...\n");
     fflush(stdout);
 
-    ModelConstructor ctor = nullptr;
+    /* The create function likely takes parameters for ORAM and DDR base addresses
+     * Signature might be: create(void *oram_base, void *ddr_base, void *param3, void *param4)
+     */
+    typedef MagikModelBase* (*CreateFunction)(void*, void*, void*, void*);
+    CreateFunction create_fn = (CreateFunction)dlsym(loader->dl_handle, "create");
 
-    const char *ctor_names[] = {
-        /* Actual symbol from AEC_T41_16K_NS_OUT_UC.mgk */
-        "_ZN17DerivedMagikModelC1ExxPvS0_S0_N5magik5venus22ModelMemoryInfoManager12MemAllocModeENS2_14MagikModelBase10ModuleModeE",
-        "_ZN17DerivedMagikModelC2ExxPvS0_S0_N5magik5venus22ModelMemoryInfoManager12MemAllocModeENS2_14MagikModelBase10ModuleModeE",
-        /* Try other possible variations */
-        "_ZN18DerivedMagikModelC1ExxPvS0_S0_N5magik5venus25ModelMemoryInfoManager13MemAllocModeENS1_14MagikModelBase10ModuleModeE",
-        "_ZN18DerivedMagikModelC2ExxPvS0_S0_N5magik5venus25ModelMemoryInfoManager13MemAllocModeENS1_14MagikModelBase10ModuleModeE",
-        nullptr
-    };
-
-    for (int i = 0; ctor_names[i] != nullptr; i++) {
-        printf("load_mgk_model: Trying symbol %d...\n", i);
-        fflush(stdout);
-
-        ctor = (ModelConstructor)dlsym(loader->dl_handle, ctor_names[i]);
-
-        printf("load_mgk_model: dlsym returned %p\n", (void*)ctor);
-        fflush(stdout);
-
-        if (ctor) {
-            printf("Found model constructor at index %d: %p\n", i, (void*)ctor);
-            break;
-        }
-    }
-
-    if (!ctor) {
-        fprintf(stderr, "load_mgk_model: Could not find DerivedMagikModel constructor\n");
+    if (!create_fn) {
+        fprintf(stderr, "load_mgk_model: Could not find 'create' function: %s\n", dlerror());
+        dlclose(loader->dl_handle);
         delete loader;
         return nullptr;
     }
 
-    printf("Calling constructor with:\n");
-    printf("  __oram_vbase = %p\n", __oram_vbase);
-    printf("  __ddr_vbase = %p\n", __ddr_vbase);
+    printf("Found 'create' function at %p\n", (void*)create_fn);
+    fflush(stdout);
 
-    /* Instantiate the model
-     * Note: param3 is a reference and may be modified by the constructor
-     */
-    void *oram_base = __oram_vbase;
+    /* Call the create function to instantiate the model */
+    printf("Calling create(__oram_vbase=%p, __ddr_vbase=%p, NULL, NULL)...\n", __oram_vbase, __ddr_vbase);
+    fflush(stdout);
 
     try {
-        loader->model_instance = ctor(
-            0,  /* param1 */
-            0,  /* param2 */
-            oram_base,  /* ORAM base (reference - may be modified) */
-            __ddr_vbase,   /* DDR base */
-            nullptr,  /* param5 */
-            ModelMemoryInfoManager::MemAllocMode::DEFAULT,
-            MagikModelBase::ModuleMode::NORMAL
-        );
+        loader->model_instance = create_fn(__oram_vbase, __ddr_vbase, nullptr, nullptr);
+
+        printf("create() returned: %p\n", (void*)loader->model_instance);
+        fflush(stdout);
 
         if (!loader->model_instance) {
-            fprintf(stderr, "load_mgk_model: Constructor returned NULL\n");
+            fprintf(stderr, "load_mgk_model: create() returned NULL\n");
+            dlclose(loader->dl_handle);
             delete loader;
             return nullptr;
         }
 
-        printf("Model instance created successfully at %p\n", loader->model_instance);
-        printf("After construction, oram_base = %p (may have been modified)\n", oram_base);
+        printf("Model instance created at %p\n", loader->model_instance);
+        fflush(stdout);
 
     } catch (const std::exception &e) {
         fprintf(stderr, "load_mgk_model: Exception: %s\n", e.what());
@@ -194,9 +168,24 @@ void* get_mgk_model_instance(void *handle) {
 }
 
 void unload_mgk_model(void *handle) {
-    if (handle) {
-        delete static_cast<ModelLoader*>(handle);
+    if (!handle) {
+        return;
     }
+
+    ModelLoader *loader = static_cast<ModelLoader*>(handle);
+
+    /* Call the 'destroy' function if available */
+    if (loader->dl_handle && loader->model_instance) {
+        typedef void (*DestroyFunction)(MagikModelBase*);
+        DestroyFunction destroy_fn = (DestroyFunction)dlsym(loader->dl_handle, "destroy");
+
+        if (destroy_fn) {
+            printf("Calling destroy() on model instance\n");
+            destroy_fn(loader->model_instance);
+        }
+    }
+
+    delete loader;
 }
 
 } // extern "C"
