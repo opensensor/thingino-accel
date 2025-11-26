@@ -92,6 +92,14 @@ int MagikLayerBase::get_layer_id() const {
 /* MagikModelBase implementation */
 MagikModelBase::MagikModelBase(long long param1, long long param2, void *&param3, void *param4,
                                ModelMemoryInfoManager::MemAllocMode mode, ModuleMode module_mode) {
+    printf("MagikModelBase::MagikModelBase() called\n");
+    printf("  param1 = %lld\n", param1);
+    printf("  param2 = %lld\n", param2);
+    printf("  param3 = %p\n", param3);
+    printf("  param4 = %p\n", param4);
+    printf("  mode = %d\n", (int)mode);
+    printf("  module_mode = %d\n", (int)module_mode);
+
     (void)param1; (void)param2; (void)param3; (void)param4; (void)mode; (void)module_mode;
 }
 

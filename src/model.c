@@ -18,6 +18,7 @@
 #include "nna.h"
 #include "nna_model.h"
 #include "nna_memory.h"
+#include "venus/model_loader.h"
 
 /* Model structure */
 struct nna_model {
@@ -42,6 +43,9 @@ struct nna_model {
     int (*model_run)(void*);              /* Model run function */
     void (*model_cleanup)(void*);         /* Model cleanup function */
     void *model_context;     /* Model-specific context */
+
+    /* C++ model instance (from model_loader) */
+    void *mgk_model_handle;  /* Handle from load_mgk_model() */
 
     /* Inference state */
     nna_tensor_t **inputs;   /* Input tensors */
@@ -284,33 +288,49 @@ int nna_model_run(nna_model_t *model) {
         return NNA_ERROR_INVALID;
     }
 
-    /* Try to load model as shared library if not already loaded */
+    /* Try to load model as C++ class if not already loaded */
+    if (model->mgk_model_handle == NULL && model->model_path != NULL) {
+        printf("Loading .mgk model: %s\n", model->model_path);
+        model->mgk_model_handle = load_mgk_model(model->model_path);
+        if (model->mgk_model_handle == NULL) {
+            fprintf(stderr, "nna_model_run: Failed to load .mgk model\n");
+            return NNA_ERROR_DEVICE;
+        }
+        printf("Model loaded successfully\n");
+    }
+
+    /* Run inference using C++ model */
+    if (model->mgk_model_handle != NULL) {
+        printf("Running inference...\n");
+        int result = run_mgk_model(model->mgk_model_handle);
+        if (result == 0) {
+            printf("Inference completed successfully\n");
+            return NNA_SUCCESS;
+        } else {
+            fprintf(stderr, "nna_model_run: Inference failed with code %d\n", result);
+            return NNA_ERROR_DEVICE;
+        }
+    }
+
+    /* Fallback: try old C-style loading */
     if (model->dl_handle == NULL && model->model_path != NULL) {
-        printf("Loading model as shared library: %s\n", model->model_path);
+        printf("Trying C-style model loading: %s\n", model->model_path);
         model->dl_handle = dlopen(model->model_path, RTLD_NOW | RTLD_LOCAL);
         if (model->dl_handle == NULL) {
             fprintf(stderr, "nna_model_run: dlopen failed: %s\n", dlerror());
-            fprintf(stderr, "Note: .mgk models may require specific runtime environment\n");
             return NNA_ERROR_DEVICE;
         }
 
-        /* Try to find common entry points */
         model->model_init = dlsym(model->dl_handle, "model_init");
         model->model_run = dlsym(model->dl_handle, "model_run");
         model->model_cleanup = dlsym(model->dl_handle, "model_cleanup");
-
-        printf("Model symbols: init=%p run=%p cleanup=%p\n",
-               model->model_init, model->model_run, model->model_cleanup);
     }
 
-    /* If we have a model_run function, call it */
     if (model->model_run != NULL && model->model_context != NULL) {
         return model->model_run(model->model_context);
     }
 
-    /* Otherwise, this is expected - models need specific runtime */
-    fprintf(stderr, "nna_model_run: Model loaded but no executable entry points found\n");
-    fprintf(stderr, "This is expected - .mgk models require the Venus runtime\n");
+    fprintf(stderr, "nna_model_run: No executable model found\n");
     return NNA_ERROR_DEVICE;
 }
 
@@ -318,6 +338,12 @@ int nna_model_run(nna_model_t *model) {
 void nna_model_unload(nna_model_t *model) {
     if (model == NULL) {
         return;
+    }
+
+    /* Unload C++ model if loaded */
+    if (model->mgk_model_handle) {
+        unload_mgk_model(model->mgk_model_handle);
+        model->mgk_model_handle = NULL;
     }
 
     /* Cleanup model context if we have a cleanup function */

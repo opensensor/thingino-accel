@@ -64,14 +64,14 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.c | $(OBJ_DIR)
 $(OBJ_DIR)/venus_%.o: $(SRC_DIR)/venus/%.cpp | $(OBJ_DIR)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-# Build NNA static library
-$(LIB_NNA_STATIC): $(C_OBJS) | $(LIB_DIR)
+# Build NNA static library (includes C++ Venus objects)
+$(LIB_NNA_STATIC): $(C_OBJS) $(CXX_OBJS) | $(LIB_DIR)
 	$(AR) rcs $@ $^
 	@echo "Built static library: $@"
 
-# Build NNA shared library
-$(LIB_NNA_SHARED): $(C_OBJS) | $(LIB_DIR)
-	$(CC) -shared -o $@ $^ $(LIBS)
+# Build NNA shared library (includes C++ Venus objects)
+$(LIB_NNA_SHARED): $(C_OBJS) $(CXX_OBJS) | $(LIB_DIR)
+	$(CXX) -shared -o $@ $^ $(LIBS)
 	@echo "Built shared library: $@"
 
 # Build Venus static library
