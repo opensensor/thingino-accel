@@ -70,6 +70,7 @@ public:
     virtual void _flush_cache(std::vector<TensorXWrapper*> tensors);
     virtual std::vector<TensorXWrapper*> get_inputs() const;
     virtual std::vector<TensorXWrapper*> get_outputs() const;
+    virtual std::vector<TensorXWrapper*> get_input_wrappers() const;
     virtual std::vector<TensorXWrapper*> get_output_wrappers() const;
 };
 
@@ -111,6 +112,7 @@ public:
     virtual std::string get_output_names() const;
     virtual std::string get_input_names() const;
     virtual TensorXWrapper* get_output(std::string &name) const;
+    virtual TensorXWrapper* get_output(int index) const;
     virtual size_t get_forward_memory_size() const;
 };
 

@@ -73,6 +73,10 @@ std::vector<TensorXWrapper*> MagikLayerBase::get_outputs() const {
     return std::vector<TensorXWrapper*>();
 }
 
+std::vector<TensorXWrapper*> MagikLayerBase::get_input_wrappers() const {
+    return std::vector<TensorXWrapper*>();
+}
+
 std::vector<TensorXWrapper*> MagikLayerBase::get_output_wrappers() const {
     return std::vector<TensorXWrapper*>();
 }
@@ -131,6 +135,11 @@ std::string MagikModelBase::get_input_names() const {
 
 TensorXWrapper* MagikModelBase::get_output(std::string &name) const {
     (void)name;
+    return nullptr;
+}
+
+TensorXWrapper* MagikModelBase::get_output(int index) const {
+    (void)index;
     return nullptr;
 }
 

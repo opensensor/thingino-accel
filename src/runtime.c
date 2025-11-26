@@ -32,27 +32,42 @@ void __assert(const char *func, const char *file, int line, const char *expr) {
     abort();
 }
 
+/* Get device state from device.c */
+extern void* nna_device_get_oram(void);
+extern void* nna_device_get_nndma_io(void);
+extern void* nna_device_get_nndma_desram(void);
+extern void* nna_device_get_ddr(void);
+extern uint32_t nna_device_get_ddr_pbase(void);
+
 /* Initialize runtime environment */
 int nna_runtime_init(void) {
     nna_hw_info_t hw_info;
-    
+
     if (nna_get_hw_info(&hw_info) != NNA_SUCCESS) {
         fprintf(stderr, "nna_runtime_init: Failed to get hardware info\n");
         return -1;
     }
-    
+
     /* Set ORAM base addresses */
     oram_base = (void*)(uintptr_t)hw_info.oram_pbase;
-    __oram_vbase = (void*)(uintptr_t)hw_info.oram_vbase;
-    
-    /* DDR base is typically 0 on MIPS */
-    __ddr_pbase = (void*)0;
-    
+    __oram_vbase = nna_device_get_oram();
+
+    /* Set DDR base addresses */
+    __ddr_pbase = (void*)(uintptr_t)nna_device_get_ddr_pbase();
+    __ddr_vbase = nna_device_get_ddr();
+
+    /* Set NNA DMA base addresses */
+    __nndma_io_vbase = nna_device_get_nndma_io();
+    __nndma_desram_vbase = nna_device_get_nndma_desram();
+
     printf("Runtime initialized:\n");
     printf("  oram_base = %p\n", oram_base);
     printf("  __oram_vbase = %p\n", __oram_vbase);
     printf("  __ddr_pbase = %p\n", __ddr_pbase);
-    
+    printf("  __ddr_vbase = %p\n", __ddr_vbase);
+    printf("  __nndma_io_vbase = %p\n", __nndma_io_vbase);
+    printf("  __nndma_desram_vbase = %p\n", __nndma_desram_vbase);
+
     return 0;
 }
 
