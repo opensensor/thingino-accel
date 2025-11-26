@@ -44,7 +44,7 @@ CXX_OBJS := $(patsubst $(SRC_DIR)/venus/%.cpp,$(OBJ_DIR)/venus_%.o,$(CXX_SRCS))
 ALL_OBJS := $(C_OBJS) $(CXX_OBJS)
 
 # Example programs
-EXAMPLES := test_init test_model_load
+EXAMPLES := test_init test_model_load test_inference
 EXAMPLE_BINS := $(patsubst %,$(BIN_DIR)/%,$(EXAMPLES))
 
 # Targets

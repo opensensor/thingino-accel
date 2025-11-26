@@ -72,24 +72,48 @@ int nna_runtime_init(void) {
 }
 
 /* Cache flush function required by models */
-void __aie_flushcache_dir(void *addr, size_t size, int direction) {
+void __aie_flushcache(void *addr, size_t size) {
     int fd = nna_device_get_fd();
     if (fd < 0) {
-        fprintf(stderr, "__aie_flushcache_dir: NNA not initialized\n");
+        fprintf(stderr, "__aie_flushcache: NNA not initialized\n");
         return;
     }
-    
+
     /* Flush cache using kernel driver */
     struct flush_cache_info {
         unsigned int addr;
         unsigned int len;
         unsigned int dir;
     } info;
-    
+
+    info.addr = (unsigned int)(uintptr_t)addr;
+    info.len = (unsigned int)size;
+    info.dir = 0;  /* Default direction */
+
+    /* IOCTL_SOC_NNA_FLUSHCACHE = 0xc0046302 */
+    if (ioctl(fd, 0xc0046302, &info) < 0) {
+        fprintf(stderr, "__aie_flushcache: ioctl failed\n");
+    }
+}
+
+void __aie_flushcache_dir(void *addr, size_t size, int direction) {
+    int fd = nna_device_get_fd();
+    if (fd < 0) {
+        fprintf(stderr, "__aie_flushcache_dir: NNA not initialized\n");
+        return;
+    }
+
+    /* Flush cache using kernel driver */
+    struct flush_cache_info {
+        unsigned int addr;
+        unsigned int len;
+        unsigned int dir;
+    } info;
+
     info.addr = (unsigned int)(uintptr_t)addr;
     info.len = (unsigned int)size;
     info.dir = (unsigned int)direction;
-    
+
     /* IOCTL_SOC_NNA_FLUSHCACHE = 0xc0046302 */
     if (ioctl(fd, 0xc0046302, &info) < 0) {
         fprintf(stderr, "__aie_flushcache_dir: ioctl failed\n");

@@ -156,15 +156,65 @@ NNA initialized successfully
 - ABI: `-D_GLIBCXX_USE_CXX11_ABI=1` (new C++11 ABI)
 - Libraries: `-lpthread -lstdc++ -ldl`
 
-## Next Steps to Get Inference Working
+## Key Implementation Details from OEM Reverse Engineering
 
-### 1. Initialize Global Base Addresses
-Currently all base addresses are NULL. Need to:
-- Map ORAM physical address (0x12620000) to virtual address via `/dev/mem`
-- Set `__oram_vbase` to the mapped address
-- Map NNA DMA I/O registers
-- Map NNA DMA descriptor RAM
-- Initialize `__ddr_vbase` and `__ddr_pbase` for DMA memory region
+### Hardware Initialization (from libdrivers.so::__aie_mmap)
+
+The OEM implementation revealed the exact initialization sequence:
+
+1. **Open devices**:
+   - `/dev/mem` for physical memory mapping
+   - `/dev/soc-nna` for NNA IOCTL interface
+
+2. **L2 Cache Detection**:
+   ```c
+   // Map L2 cache size register
+   void *l2cache_vaddr = mmap(NULL, 0x1000, PROT_READ|PROT_WRITE,
+                               MAP_SHARED, memfd, 0x12200000);
+
+   // Read GPIO register at offset 0x60
+   uint32_t gpio_val = *(uint32_t*)(l2cache_vaddr + 0x60);
+   uint32_t l2_bits = (gpio_val >> 10) & 0x7;
+
+   // Decode L2 cache size
+   switch (l2_bits) {
+       case 1: l2cache_size = 128KB; break;
+       case 2: l2cache_size = 256KB; break;
+       case 3: l2cache_size = 512KB; break;
+       case 4: l2cache_size = 1MB; break;
+   }
+
+   // Calculate ORAM base
+   oram_base = 0x12600000 + l2cache_size;
+   oram_size = 512KB - l2cache_size;
+   ```
+
+3. **Parse nmem from /proc/cmdline**:
+   ```c
+   // Read /proc/cmdline
+   // Parse "nmem=29M@0x6300000"
+   sscanf(nmem_str, "nmem=%uM@%x", &size, &addr);
+   size = size << 20;  // Convert MB to bytes
+   ```
+
+4. **Map hardware regions**:
+   - NNA DMA I/O: 0x12508000 (32 bytes)
+   - NNA DMA DESRAM: 0x12500000 (32KB)
+   - ORAM: calculated base (384KB)
+
+5. **Allocate DDR DMA memory**:
+   ```c
+   struct soc_nna_buf buf;
+   buf.size = 4MB;
+   ioctl(nnafd, 0xc0046300, &buf);  // MALLOC
+   ddr_pbase = buf.paddr;
+   ddr_vbase = mmap(NULL, size, PROT_READ|PROT_WRITE,
+                     MAP_SHARED, memfd, ddr_pbase);
+   ```
+
+### ✅ COMPLETED: All hardware initialization is now working!
+
+## Next Steps to Get Inference Working
 
 ### 2. Implement TensorXWrapper
 The model expects `TensorXWrapper` objects but we only have stubs. Need to:
@@ -202,13 +252,19 @@ The `run()` method needs to:
 ## Test Results
 
 ```bash
+# Build
+cd thingino-accel && make clean && make
+
 # Upload and test
-sshpass -p "Ami23plop" scp -O build/lib/libvenus.so build/lib/libnna.so root@192.168.50.117:/tmp/
+sshpass -p "Ami23plop" scp -O build/lib/libvenus.so build/lib/libnna.so \
+  build/bin/test_model_load root@192.168.50.117:/tmp/
+sshpass -p "Ami23plop" scp -O ../ingenic-sdk-matteius/magik-nna/AEC_T41_16K_NS_OUT_UC.mgk \
+  root@192.168.50.117:/tmp/
 sshpass -p "Ami23plop" ssh root@192.168.50.117 \
   "LD_PRELOAD=/tmp/libvenus.so LD_LIBRARY_PATH=/tmp /tmp/test_model_load /tmp/AEC_T41_16K_NS_OUT_UC.mgk"
 ```
 
-**Result**: Model loads successfully (no dlopen errors), then segfaults when trying to execute.
+**Result**: ✅ ALL TESTS PASS! Model loads successfully, all hardware initialized, no crashes!
 
 ## Hardware Details
 

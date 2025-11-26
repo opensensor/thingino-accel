@@ -72,6 +72,8 @@ public:
     virtual std::vector<TensorXWrapper*> get_outputs() const;
     virtual std::vector<TensorXWrapper*> get_input_wrappers() const;
     virtual std::vector<TensorXWrapper*> get_output_wrappers() const;
+    virtual std::string get_name() const;
+    virtual int get_layer_id() const;
 };
 
 /* MagikModelBase */
@@ -111,6 +113,8 @@ public:
     virtual int set_oram_address(void *addr, long long size) const;
     virtual std::string get_output_names() const;
     virtual std::string get_input_names() const;
+    virtual TensorXWrapper* get_input(std::string &name) const;
+    virtual TensorXWrapper* get_input(int index) const;
     virtual TensorXWrapper* get_output(std::string &name) const;
     virtual TensorXWrapper* get_output(int index) const;
     virtual size_t get_forward_memory_size() const;
