@@ -4,6 +4,7 @@
 # Toolchain configuration
 CROSS_COMPILE ?= mipsel-linux-
 CC := $(CROSS_COMPILE)gcc
+CXX := $(CROSS_COMPILE)g++
 AR := $(CROSS_COMPILE)ar
 STRIP := $(CROSS_COMPILE)strip
 
@@ -18,21 +19,32 @@ BIN_DIR := $(BUILD_DIR)/bin
 
 # Compiler flags
 CFLAGS := -Wall -Wextra -O2 -fPIC
-CFLAGS += -I$(INC_DIR)
+CFLAGS += -I$(INC_DIR) -I$(SRC_DIR)
+CXXFLAGS := -Wall -Wextra -O2 -fPIC -std=c++14
+CXXFLAGS += -I$(INC_DIR) -I$(SRC_DIR)
 LDFLAGS := -L$(LIB_DIR)
-LIBS := -lpthread
+LIBS := -lpthread -lstdc++ -ldl
 
-# Library name
-LIB_NAME := libnna
-LIB_STATIC := $(LIB_DIR)/$(LIB_NAME).a
-LIB_SHARED := $(LIB_DIR)/$(LIB_NAME).so
+# Library names
+LIB_NNA_NAME := libnna
+LIB_NNA_STATIC := $(LIB_DIR)/$(LIB_NNA_NAME).a
+LIB_NNA_SHARED := $(LIB_DIR)/$(LIB_NNA_NAME).so
+
+LIB_VENUS_NAME := libvenus
+LIB_VENUS_STATIC := $(LIB_DIR)/$(LIB_VENUS_NAME).a
+LIB_VENUS_SHARED := $(LIB_DIR)/$(LIB_VENUS_NAME).so
 
 # Source files
-SRCS := $(wildcard $(SRC_DIR)/*.c)
-OBJS := $(patsubst $(SRC_DIR)/%.c,$(OBJ_DIR)/%.o,$(SRCS))
+C_SRCS := $(wildcard $(SRC_DIR)/*.c)
+C_OBJS := $(patsubst $(SRC_DIR)/%.c,$(OBJ_DIR)/%.o,$(C_SRCS))
+
+CXX_SRCS := $(wildcard $(SRC_DIR)/venus/*.cpp)
+CXX_OBJS := $(patsubst $(SRC_DIR)/venus/%.cpp,$(OBJ_DIR)/venus_%.o,$(CXX_SRCS))
+
+ALL_OBJS := $(C_OBJS) $(CXX_OBJS)
 
 # Example programs
-EXAMPLES := test_init
+EXAMPLES := test_init test_model_load
 EXAMPLE_BINS := $(patsubst %,$(BIN_DIR)/%,$(EXAMPLES))
 
 # Targets
@@ -44,25 +56,39 @@ all: lib examples
 $(OBJ_DIR) $(LIB_DIR) $(BIN_DIR):
 	mkdir -p $@
 
-# Compile object files
+# Compile C object files
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.c | $(OBJ_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-# Build static library
-$(LIB_STATIC): $(OBJS) | $(LIB_DIR)
+# Compile C++ object files (Venus)
+$(OBJ_DIR)/venus_%.o: $(SRC_DIR)/venus/%.cpp | $(OBJ_DIR)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+# Build NNA static library
+$(LIB_NNA_STATIC): $(C_OBJS) | $(LIB_DIR)
 	$(AR) rcs $@ $^
 	@echo "Built static library: $@"
 
-# Build shared library
-$(LIB_SHARED): $(OBJS) | $(LIB_DIR)
+# Build NNA shared library
+$(LIB_NNA_SHARED): $(C_OBJS) | $(LIB_DIR)
 	$(CC) -shared -o $@ $^ $(LIBS)
 	@echo "Built shared library: $@"
 
-# Build library (both static and shared)
-lib: $(LIB_STATIC) $(LIB_SHARED)
+# Build Venus static library
+$(LIB_VENUS_STATIC): $(CXX_OBJS) $(C_OBJS) | $(LIB_DIR)
+	$(AR) rcs $@ $^
+	@echo "Built static library: $@"
+
+# Build Venus shared library
+$(LIB_VENUS_SHARED): $(CXX_OBJS) $(C_OBJS) | $(LIB_DIR)
+	$(CXX) -shared -o $@ $^ $(LIBS)
+	@echo "Built shared library: $@"
+
+# Build libraries (both NNA and Venus)
+lib: $(LIB_NNA_STATIC) $(LIB_NNA_SHARED) $(LIB_VENUS_STATIC) $(LIB_VENUS_SHARED)
 
 # Build examples
-$(BIN_DIR)/%: $(EXAMPLES_DIR)/%.c $(LIB_STATIC) | $(BIN_DIR)
+$(BIN_DIR)/%: $(EXAMPLES_DIR)/%.c $(LIB_NNA_STATIC) | $(BIN_DIR)
 	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS) -lnna $(LIBS)
 	@echo "Built example: $@"
 
@@ -70,9 +96,9 @@ examples: $(EXAMPLE_BINS)
 
 # Install (for cross-compilation, just copy to build dir)
 install: all
-	@echo "Library and examples built in $(BUILD_DIR)"
+	@echo "Libraries and examples built in $(BUILD_DIR)"
 	@echo "To deploy to device:"
-	@echo "  scp $(LIB_SHARED) root@device:/usr/lib/"
+	@echo "  scp $(LIB_NNA_SHARED) $(LIB_VENUS_SHARED) root@device:/usr/lib/"
 	@echo "  scp $(BIN_DIR)/test_init root@device:/tmp/"
 
 # Clean

@@ -14,6 +14,7 @@
 #include <errno.h>
 
 #include "nna.h"
+#include "nna_runtime.h"
 #include "device_internal.h"
 
 /* Device path */
@@ -90,6 +91,17 @@ int nna_init(void) {
     g_nna_dev.oram_mapped = NULL;
 
     g_nna_dev.initialized = 1;
+
+    /* Initialize runtime environment for .mgk models */
+    if (nna_runtime_init() < 0) {
+        fprintf(stderr, "nna_init: Runtime initialization failed\n");
+        close(g_nna_dev.memfd);
+        close(g_nna_dev.fd);
+        g_nna_dev.memfd = -1;
+        g_nna_dev.fd = -1;
+        g_nna_dev.initialized = 0;
+        return NNA_ERROR_INIT;
+    }
 
     printf("NNA initialized successfully\n");
     printf("  Device: %s\n", NNA_DEVICE_PATH);
