@@ -65,6 +65,16 @@ enum class ChannelLayout : int {
 /* Shape type */
 using shape_t = std::vector<int32_t>;
 
+/* Opaque data attribute type used by OEM Magik kernels.
+ * We only need the type name for interop with .mgk functions such as
+ * prepare_init_attr; the actual layout lives inside the OEM binaries.
+ * Do not rely on any particular fields or size here.
+ */
+struct DataAttribute {
+    // Intentionally empty placeholder; we never access fields directly.
+};
+
+
 /* Utility functions namespace */
 namespace utils {
     /* Type conversion utilities */
