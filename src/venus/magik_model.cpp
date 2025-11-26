@@ -73,8 +73,12 @@ std::vector<TensorXWrapper*> MagikLayerBase::get_outputs() const {
     return std::vector<TensorXWrapper*>();
 }
 
+std::vector<TensorXWrapper*> MagikLayerBase::get_output_wrappers() const {
+    return std::vector<TensorXWrapper*>();
+}
+
 /* MagikModelBase implementation */
-MagikModelBase::MagikModelBase(long long param1, long long param2, void **param3, void *param4,
+MagikModelBase::MagikModelBase(long long param1, long long param2, void *&param3, void *param4,
                                ModelMemoryInfoManager::MemAllocMode mode, ModuleMode module_mode) {
     (void)param1; (void)param2; (void)param3; (void)param4; (void)mode; (void)module_mode;
 }
@@ -115,6 +119,23 @@ int MagikModelBase::set_oram_address(void *addr, long long size) const {
 TensorXWrapper* MagikModelBase::PyramidConfig::get_tensor_wrapper(std::string &name) const {
     (void)name;
     return nullptr;
+}
+
+std::string MagikModelBase::get_output_names() const {
+    return "";
+}
+
+std::string MagikModelBase::get_input_names() const {
+    return "";
+}
+
+TensorXWrapper* MagikModelBase::get_output(std::string &name) const {
+    (void)name;
+    return nullptr;
+}
+
+size_t MagikModelBase::get_forward_memory_size() const {
+    return 1024 * 1024;  // 1MB default
 }
 
 } // namespace venus
