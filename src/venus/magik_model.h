@@ -18,13 +18,38 @@ namespace venus {
 class TensorXWrapper;
 class MagikLayerBase;
 
-/* Tensor info */
+/* Tensor info - layout must match OEM TensorInfo (size 0x70) */
 struct TensorInfo {
-    std::string name;
-    shape_t shape;
-    DataType dtype;
-    TensorFormat format;
+    std::string name;      // 0x00: tensor name
+
+    // Flags indicating whether this tensor is model input/output.
+    // These bytes are used by OEM build_tensors to populate input/output maps.
+    uint8_t is_input;      // 0x18
+    uint8_t is_output;     // 0x19
+    uint8_t reserved0[2];  // 0x1a-0x1b padding
+
+    // Additional metadata strings used by OEM code to derive dtype/format.
+    // Exact semantics still under RE, but they are passed through to
+    // utils::string2data_type / string2data_format.
+    std::string layout;    // 0x1c: data layout / format string (e.g. "NHWC")
+    std::string dtype_str; // 0x34: data type string (e.g. "FP32")
+
+    // Shape vector (std::vector<int32_t>) at offset 0x4c.
+    shape_t shape;         // 0x4c
+
+    // Misc integer fields used for offsets/strides/etc in OEM code.
+    int32_t stride;        // 0x58
+    int32_t some_flag;     // 0x5c
+    int32_t offset;        // 0x60
+    int32_t field_64;      // 0x64
+    int32_t field_68;      // 0x68
+
+    uint8_t channel;       // 0x6c
+    uint8_t reserved1[3];  // 0x6d-0x6f padding
 };
+
+static_assert(sizeof(TensorInfo) == 0x70,
+              "TensorInfo size must match OEM (0x70 bytes)");
 
 /* Model memory info manager */
 class ModelMemoryInfoManager {

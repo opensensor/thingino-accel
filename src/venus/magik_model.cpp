@@ -269,54 +269,93 @@ TensorX* MagikModelBase::create_tensor(TensorInfo info) {
     printf("[VENUS] MagikModelBase::create_tensor(name=%s)\n", info.name.c_str());
     fflush(stdout);
 
-    /* Allocate a TensorX object (0x44 bytes as per OEM) */
-    TensorX *tensor = new TensorX();
+    /* Log TensorInfo details to validate ABI/layout at runtime. */
+    printf("[VENUS]   dtype_str=\"%s\", layout=\"%s\", is_input=%u, is_output=%u\n",
+           info.dtype_str.c_str(), info.layout.c_str(),
+           (unsigned)info.is_input, (unsigned)info.is_output);
+    printf("[VENUS]   shape dims=[");
+    for (size_t i = 0; i < info.shape.size(); ++i) {
+        printf("%d%s", info.shape[i], (i + 1 < info.shape.size()) ? "," : "");
+    }
+    printf("]\n");
+    fflush(stdout);
 
-    /* Set basic properties from TensorInfo */
-    tensor->dtype  = info.dtype;
-    tensor->format = info.format;
+    /* Allocate a TensorX object (0x44 bytes as per OEM) */
+    TensorX *tensor = new(std::nothrow) TensorX();
+    if (!tensor) {
+        printf("[VENUS] ERROR: MagikModelBase::create_tensor - new TensorX failed\n");
+        fflush(stdout);
+        return nullptr;
+    }
+
+    /* Derive dtype/format from strings when available. */
+    DataType (*dt_fn)(const std::string&) = utils::string2data_type;
+    TensorFormat (*fmt_fn)(const std::string&) = utils::string2data_format;
+
+    DataType dtype = dt_fn(info.dtype_str);
+    if (dtype == DataType::NONE || dtype == DataType::AUTO) {
+        dtype = DataType::FP32;  /* Reasonable default */
+    }
+    TensorFormat fmt = fmt_fn(info.layout);
+
+    tensor->dtype  = dtype;
+    tensor->format = fmt;
+
+    /* Configure shape. */
     tensor->set_shape(info.shape);
 
-    /* Calculate size based on shape and dtype */
+    /* Compute total number of elements. */
     size_t total_elements = 1;
-    for (size_t i = 0; i < info.shape.size(); i++) {
-        total_elements *= static_cast<size_t>(info.shape[i]);
+    for (size_t i = 0; i < info.shape.size(); ++i) {
+        int dim = info.shape[i];
+        if (dim <= 0) {
+            continue;
+        }
+        total_elements *= static_cast<size_t>(dim);
+    }
+    if (total_elements == 0) {
+        total_elements = 1;
     }
 
-    /* Get bytes per element based on dtype */
-    int bits_per_element = 8; /* Default to INT8 */
-    switch (info.dtype) {
-        case DataType::FP32:   bits_per_element = 32; break;
-        case DataType::INT32:  bits_per_element = 32; break;
-        case DataType::UINT32: bits_per_element = 32; break;
-        case DataType::INT16:  bits_per_element = 16; break;
-        case DataType::UINT16: bits_per_element = 16; break;
-        case DataType::INT8:   bits_per_element = 8;  break;
-        case DataType::UINT8:  bits_per_element = 8;  break;
-        case DataType::UINT4B: bits_per_element = 4;  break;
-        case DataType::UINT2B: bits_per_element = 2;  break;
-        case DataType::BOOL:   bits_per_element = 1;  break;
-        default:               bits_per_element = 8;  break;
+    int bits_per_element = utils::data_type2bits(dtype);
+    if (bits_per_element <= 0) {
+        bits_per_element = 32;  /* Conservative default */
     }
 
-    size_t bytes_needed = (total_elements * bits_per_element + 7u) / 8u;
-    tensor->bytes = static_cast<uint32_t>(bytes_needed);
+    size_t bytes_needed = (total_elements * static_cast<size_t>(bits_per_element) + 7u) / 8u;
+    if (bytes_needed == 0) {
+        bytes_needed = 4;
+    }
 
-    /* Allocate data buffer - use ORAM or DDR depending on size */
-    /* For now, use regular malloc - TODO: use proper NNA memory allocation */
-    tensor->data = malloc(bytes_needed);
-    if (!tensor->data) {
-        printf("[VENUS] ERROR: Failed to allocate %zu bytes for tensor data\n", bytes_needed);
+    /* Align to NNA-friendly boundary and allocate from ORAM/DDR. */
+    tensor->align = 64;
+    size_t aligned_bytes = (bytes_needed + tensor->align - 1u) & ~static_cast<size_t>(tensor->align - 1u);
+
+    void *data = core::oram_malloc(aligned_bytes);
+    if (!data) {
+        printf("[VENUS] WARNING: core::oram_malloc(%zu) failed, falling back to malloc\n",
+               aligned_bytes);
+        fflush(stdout);
+        data = std::malloc(aligned_bytes);
+    }
+
+    if (!data) {
+        printf("[VENUS] ERROR: Failed to allocate %zu bytes for tensor data\n",
+               aligned_bytes);
         fflush(stdout);
         delete tensor;
         return nullptr;
     }
 
-    tensor->owns_data = 1u;
+    tensor->data        = data;
+    tensor->bytes       = static_cast<uint32_t>(aligned_bytes);
+    tensor->owns_data   = 1u;
+    tensor->data_offset = 0;
 
-    printf("[VENUS] Created tensor: %zu bytes, shape=[", bytes_needed);
-    for (size_t i = 0; i < info.shape.size(); i++) {
-        printf("%d%s", info.shape[i], i < info.shape.size()-1 ? "," : "");
+    printf("[VENUS] Created tensor: %zu bytes (aligned=%zu), dtype=%d, fmt=%d, shape=[",
+           bytes_needed, aligned_bytes, (int)tensor->dtype, (int)tensor->format);
+    for (size_t i = 0; i < info.shape.size(); ++i) {
+        printf("%d%s", info.shape[i], (i + 1 < info.shape.size()) ? "," : "");
     }
     printf("]\n");
     fflush(stdout);
@@ -325,7 +364,8 @@ TensorX* MagikModelBase::create_tensor(TensorInfo info) {
 }
 
 int MagikModelBase::build_tensors(PyramidConfig *config, std::vector<TensorInfo> infos) {
-    printf("[VENUS] MagikModelBase::build_tensors(config=%p)\n", config);
+    printf("[VENUS] MagikModelBase::build_tensors(config=%p, infos.size=%zu)\n",
+           (void*)config, infos.size());
     fflush(stdout);
 
     if (!config) {
@@ -334,14 +374,50 @@ int MagikModelBase::build_tensors(PyramidConfig *config, std::vector<TensorInfo>
         return -1;
     }
 
-    /* The infos vector is passed by value, which on MIPS might be passed as a pointer
-     * to a temporary. We need to be careful accessing it. For now, just return success
-     * since the .mgk file's build_tensors will handle the actual tensor creation.
-     */
-    printf("[VENUS] build_tensors: Returning success (tensors will be built by derived class)\n");
-    fflush(stdout);
+    if (infos.empty()) {
+        printf("[VENUS] build_tensors: no TensorInfo entries, nothing to do\n");
+        fflush(stdout);
+        return 0;
+    }
 
-    (void)infos; /* Suppress unused parameter warning */
+    for (size_t i = 0; i < infos.size(); ++i) {
+        TensorInfo &info = infos[i];
+        printf("[VENUS] build_tensors: [%zu] name='%s'\n",
+               i, info.name.c_str());
+        fflush(stdout);
+
+        printf("[VENUS] build_tensors: calling create_tensor for '%s'\n",
+               info.name.c_str());
+        fflush(stdout);
+
+        TensorX *tensor = MagikModelBase::create_tensor(info);
+        if (!tensor) {
+            printf("[VENUS] ERROR: create_tensor failed for '%s'\n",
+                   info.name.c_str());
+            fflush(stdout);
+            return -1;
+        }
+
+        printf("[VENUS] build_tensors: create_tensor returned %p for '%s'\n",
+               (void*)tensor, info.name.c_str());
+        fflush(stdout);
+
+        TensorXWrapper *wrapper = new TensorXWrapper(tensor);
+
+        /* Track tensor in this pyramid configuration. */
+        config->tensors_.push_back(wrapper);
+
+        /* For now, map by name in both input and output maps so that
+         * PyramidConfig::get_tensor_wrapper can resolve tensors by name. This
+         * may be refined later once we fully understand OEM input/output flags.
+         */
+        config->input_tensors_.emplace(info.name, wrapper);
+        config->output_tensors_.emplace(info.name, wrapper);
+    }
+
+    printf("[VENUS] build_tensors: built %zu tensors (config=%p, total_tensors=%zu)\n",
+           infos.size(), (void*)config, config->tensors_.size());
+    fflush(stdout);
 
     return 0;
 }
@@ -437,35 +513,219 @@ std::string MagikModelBase::get_input_names() const {
 }
 
 TensorXWrapper* MagikModelBase::get_input(std::string &name) const {
-    printf("[VENUS] MagikModelBase::get_input(name=%s) - returning nullptr\n", name.c_str());
+    printf("[VENUS] MagikModelBase::get_input(name=%s)\n", name.c_str());
     fflush(stdout);
-    (void)name;
-    return nullptr;
+
+    PyramidConfig *cfg = main_pyramid_config_;
+    if (!cfg && !pyramid_configs_.empty()) {
+        cfg = pyramid_configs_[0];
+    }
+    if (!cfg) {
+        printf("[VENUS] get_input: no PyramidConfig available, returning nullptr\n");
+        fflush(stdout);
+        return nullptr;
+    }
+
+    TensorXWrapper *wrapper = cfg->get_tensor_wrapper(name);
+    if (!wrapper) {
+        printf("[VENUS] get_input: get_tensor_wrapper returned nullptr for '%s'\n",
+               name.c_str());
+        fflush(stdout);
+        return nullptr;
+    }
+
+    // Keep inputs_ vector in sync for index-based access.
+    MagikModelBase *self = const_cast<MagikModelBase*>(this);
+    bool found = false;
+    for (auto *w : self->inputs_) {
+        if (w == wrapper) {
+            found = true;
+            break;
+        }
+    }
+    if (!found) {
+        self->inputs_.push_back(wrapper);
+    }
+
+    return wrapper;
 }
 
 TensorXWrapper* MagikModelBase::get_input(int index) const {
-    printf("[VENUS] MagikModelBase::get_input(index=%d) - returning nullptr\n", index);
+    printf("[VENUS] MagikModelBase::get_input(index=%d)\n", index);
     fflush(stdout);
-    (void)index;
+
+    if (index < 0) {
+        printf("[VENUS] get_input(index): negative index, returning nullptr\n");
+        fflush(stdout);
+        return nullptr;
+    }
+
+    if (static_cast<size_t>(index) < inputs_.size()) {
+        TensorXWrapper *wrapper = inputs_[index];
+        printf("[VENUS] get_input(index): returning inputs_[%d]=%p\n",
+               index, (void*)wrapper);
+        fflush(stdout);
+        return wrapper;
+    }
+
+    PyramidConfig *cfg = main_pyramid_config_;
+    if (!cfg && !pyramid_configs_.empty()) {
+        cfg = pyramid_configs_[0];
+    }
+    if (!cfg) {
+        printf("[VENUS] get_input(index): no PyramidConfig available, returning nullptr\n");
+        fflush(stdout);
+        return nullptr;
+    }
+
+    if (static_cast<size_t>(index) < cfg->tensors_.size()) {
+        TensorXWrapper *wrapper = cfg->tensors_[index];
+        printf("[VENUS] get_input(index): using config->tensors_[%d]=%p\n",
+               index, (void*)wrapper);
+        fflush(stdout);
+
+        // Keep inputs_ vector in sync.
+        MagikModelBase *self = const_cast<MagikModelBase*>(this);
+        bool found = false;
+        for (auto *w : self->inputs_) {
+            if (w == wrapper) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            self->inputs_.push_back(wrapper);
+        }
+
+        return wrapper;
+    }
+
+    printf("[VENUS] get_input(index): index %d out of range, returning nullptr\n", index);
+    fflush(stdout);
     return nullptr;
 }
 
 TensorXWrapper* MagikModelBase::get_output(std::string &name) const {
-    printf("[VENUS] MagikModelBase::get_output(name=%s) - returning nullptr\n", name.c_str());
+    printf("[VENUS] MagikModelBase::get_output(name=%s)\n", name.c_str());
     fflush(stdout);
-    (void)name;
-    return nullptr;
+
+    PyramidConfig *cfg = main_pyramid_config_;
+    if (!cfg && !pyramid_configs_.empty()) {
+        cfg = pyramid_configs_[0];
+    }
+    if (!cfg) {
+        printf("[VENUS] get_output: no PyramidConfig available, returning nullptr\n");
+        fflush(stdout);
+        return nullptr;
+    }
+
+    TensorXWrapper *wrapper = cfg->get_tensor_wrapper(name);
+    if (!wrapper) {
+        printf("[VENUS] get_output: get_tensor_wrapper returned nullptr for '%s'\n",
+               name.c_str());
+        fflush(stdout);
+        return nullptr;
+    }
+
+    // Keep outputs_ vector in sync for index-based access.
+    MagikModelBase *self = const_cast<MagikModelBase*>(this);
+    bool found = false;
+    for (auto *w : self->outputs_) {
+        if (w == wrapper) {
+            found = true;
+            break;
+        }
+    }
+    if (!found) {
+        self->outputs_.push_back(wrapper);
+    }
+
+    return wrapper;
 }
 
 TensorXWrapper* MagikModelBase::get_output(int index) const {
-    printf("[VENUS] MagikModelBase::get_output(index=%d) - returning nullptr\n", index);
+    printf("[VENUS] MagikModelBase::get_output(index=%d)\n", index);
     fflush(stdout);
-    (void)index;
+
+    if (index < 0) {
+        printf("[VENUS] get_output(index): negative index, returning nullptr\n");
+        fflush(stdout);
+        return nullptr;
+    }
+
+    if (static_cast<size_t>(index) < outputs_.size()) {
+        TensorXWrapper *wrapper = outputs_[index];
+        printf("[VENUS] get_output(index): returning outputs_[%d]=%p\n",
+               index, (void*)wrapper);
+        fflush(stdout);
+        return wrapper;
+    }
+
+    PyramidConfig *cfg = main_pyramid_config_;
+    if (!cfg && !pyramid_configs_.empty()) {
+        cfg = pyramid_configs_[0];
+    }
+    if (!cfg) {
+        printf("[VENUS] get_output(index): no PyramidConfig available, returning nullptr\n");
+        fflush(stdout);
+        return nullptr;
+    }
+
+    if (static_cast<size_t>(index) < cfg->tensors_.size()) {
+        TensorXWrapper *wrapper = cfg->tensors_[index];
+        printf("[VENUS] get_output(index): using config->tensors_[%d]=%p\n",
+               index, (void*)wrapper);
+        fflush(stdout);
+
+        // Keep outputs_ vector in sync.
+        MagikModelBase *self = const_cast<MagikModelBase*>(this);
+        bool found = false;
+        for (auto *w : self->outputs_) {
+            if (w == wrapper) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            self->outputs_.push_back(wrapper);
+        }
+
+        return wrapper;
+    }
+
+    printf("[VENUS] get_output(index): index %d out of range, returning nullptr\n", index);
+    fflush(stdout);
     return nullptr;
 }
 
 size_t MagikModelBase::get_forward_memory_size() const {
-    return 1024 * 1024;  // 1MB default
+    size_t total = 0;
+
+    /* Sum the byte sizes of all tensors in all pyramid configurations. */
+    for (size_t i = 0; i < pyramid_configs_.size(); ++i) {
+        PyramidConfig *cfg = pyramid_configs_[i];
+        if (!cfg) {
+            continue;
+        }
+
+        for (size_t j = 0; j < cfg->tensors_.size(); ++j) {
+            TensorXWrapper *wrapper = cfg->tensors_[j];
+            if (!wrapper || !wrapper->tensorx) {
+                continue;
+            }
+            total += wrapper->tensorx->get_bytes_size();
+        }
+    }
+
+    if (total == 0) {
+        /* Fallback to 1MB default if we have not built any tensors yet. */
+        total = 1024 * 1024;
+    }
+
+    printf("[VENUS] MagikModelBase::get_forward_memory_size() -> %zu bytes\n", total);
+    fflush(stdout);
+
+    return total;
 }
 
 } // namespace venus
