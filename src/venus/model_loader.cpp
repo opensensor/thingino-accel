@@ -124,11 +124,25 @@ void* load_mgk_model(const char *path) {
         printf("Model instance created at %p\n", loader->model_instance);
         fflush(stdout);
 
+    } catch (const std::bad_alloc &e) {
+        fprintf(stderr, "load_mgk_model: bad_alloc Exception: %s\n", e.what());
+        fflush(stderr);
+        delete loader;
+        return nullptr;
     } catch (const std::exception &e) {
         fprintf(stderr, "load_mgk_model: Exception: %s\n", e.what());
+        fflush(stderr);
         delete loader;
         return nullptr;
     } catch (...) {
+        fprintf(stderr, "load_mgk_model: Unknown exception\n");
+        fflush(stderr);
+        delete loader;
+        return nullptr;
+    }
+
+    printf("load_mgk_model: About to return loader=%p\n", (void*)loader);
+    fflush(stdout); catch (...) {
         fprintf(stderr, "load_mgk_model: Unknown exception\n");
         delete loader;
         return nullptr;

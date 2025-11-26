@@ -85,11 +85,19 @@ public:
         DEBUG = 1,
     };
 
-    /* Pyramid configuration - nested class */
+    /* Pyramid configuration - nested class
+     * Size: 0x50 (80 bytes) based on OEM libmert.so
+     * Layout:
+     * - Offset 0x00-0x0b: basic fields (level, width, height)
+     * - Offset 0x0c: std::vector<TensorXWrapper*> tensors_
+     * - Offset 0x20: std::map for input tensors
+     * - Offset 0x38: std::map for output tensors
+     */
     struct PyramidConfig {
         int level;
         int width;
         int height;
+        std::vector<TensorXWrapper*> tensors_;  // At offset 0x0c
 
         TensorXWrapper* get_tensor_wrapper(std::string &name) const;
     };
@@ -125,6 +133,7 @@ public:
     virtual PyramidConfig* get_main_pyramid_config();
 
     virtual int build_tensors(PyramidConfig *config, std::vector<TensorInfo> infos);
+    virtual TensorX* create_tensor(TensorInfo info);
     virtual int update_cache_buffer_ptr(std::vector<MagikLayerBase*> layers, void *ptr);
     virtual int set_oram_address(void *addr, long long size) const;
     virtual std::string get_output_names() const;

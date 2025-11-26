@@ -21,13 +21,23 @@ TensorXWrapper::~TensorXWrapper() {}
 
 /* TensorX constructor with size, data pointer, and device */
 extern "C" void _ZN5magik5venus7TensorXC1EjPvNS0_6DeviceE(TensorX *this_ptr, uint32_t size, void *data_ptr, Device dev) {
-    printf("[VENUS] TensorX::TensorX(size=%u, data=%p)\n", size, data_ptr);
+    printf("[VENUS] TensorX::TensorX(this=%p, size=%u, data=%p)\n", (void*)this_ptr, size, data_ptr);
     fflush(stdout);
     (void)dev;
-    new (this_ptr) TensorX();
+
+    /* Don't use placement new - the object might already be constructed.
+     * Just initialize the members directly.
+     */
     this_ptr->data = data_ptr;
     this_ptr->bytes = size;
     this_ptr->owns_data = false;
+    this_ptr->dtype = DataType::INT8;
+    this_ptr->format = TensorFormat::NHWC;
+    this_ptr->ref_count = 1;
+    /* Leave shape vector as-is - it's already initialized */
+
+    printf("[VENUS] TensorX::TensorX() completed\n");
+    fflush(stdout);
 }
 
 /* TensorX mudata method */
@@ -199,13 +209,23 @@ MagikModelBase::PyramidConfig* MagikModelBase::get_main_pyramid_config() {
     return main_pyramid_config_;
 }
 
+TensorX* MagikModelBase::create_tensor(TensorInfo info) {
+    printf("[VENUS] MagikModelBase::create_tensor() - stub\n");
+    fflush(stdout);
+
+    /* Stub: allocate a TensorX and return it */
+    TensorX *tensor = new TensorX();
+    (void)info;
+
+    return tensor;
+}
+
 int MagikModelBase::build_tensors(PyramidConfig *config, std::vector<TensorInfo> infos) {
     printf("[VENUS] MagikModelBase::build_tensors(config=%p)\n", config);
     fflush(stdout);
 
-    /* The config parameter is NULL, which is wrong. The derived class should be passing
-     * this->main_pyramid_config_, but it's not. This suggests a memory layout mismatch.
-     * For now, just return success to see if we can get past this point.
+    /* Stub: just return success for now
+     * Don't access infos.size() as the vector might be corrupted due to calling convention issues
      */
     (void)config; (void)infos;
     return 0;
@@ -236,9 +256,23 @@ int MagikModelBase::set_oram_address(void *addr, long long size) const {
 
 /* PyramidConfig::get_tensor_wrapper */
 TensorXWrapper* MagikModelBase::PyramidConfig::get_tensor_wrapper(std::string &name) const {
-    printf("[VENUS] PyramidConfig::get_tensor_wrapper(name=%s) - returning nullptr\n", name.c_str());
+    printf("[VENUS] PyramidConfig::get_tensor_wrapper(name=%s)\n", name.c_str());
     fflush(stdout);
-    (void)name;
+
+    /* Search through the tensors_ vector for a matching name */
+    for (size_t i = 0; i < tensors_.size(); i++) {
+        TensorXWrapper *wrapper = tensors_[i];
+        if (wrapper) {
+            /* TODO: Compare wrapper->get_name() with name */
+            /* For now, just return nullptr since we don't have tensors yet */
+        }
+    }
+
+    /* Not found - print error message as per OEM */
+    fprintf(stderr, "\x1b[0;32;31m[E/%s]:\x1b[m Can't find the corresponding network tensor by name '%s' in pyramid config.\n",
+            "magik::venus", name.c_str());
+    fflush(stderr);
+
     return nullptr;
 }
 
