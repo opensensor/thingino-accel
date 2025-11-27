@@ -176,6 +176,73 @@ extern "C" const void* _ZNK5magik5venus7TensorX5vdataIaEEPKT_v(const TensorX *th
     return ptr;
 }
 
+	/* TensorX reset_data stub (OEM-compatible symbol)
+	 * Signature: void TensorX::reset_data(void *buf, void *data, int bytes)
+	 * We treat `data` as a direct pointer to the underlying buffer and avoid
+	 * any std::shared_ptr<MBuffer> / control-block gymnastics to prevent
+	 * layout-dependent corruption.
+	 */
+	extern "C" void _ZN5magik5venus7TensorX10reset_dataEPvS2_i(
+	    TensorX *this_ptr, void *buf, void *data_ptr, int bytes) {
+	    (void)buf; /* Unused for now; OEM may use this for host-side aliasing. */
+
+	    long raw_ndims = 0;
+	    if (this_ptr->dims_begin && this_ptr->dims_end) {
+	        raw_ndims = (long)(this_ptr->dims_end - this_ptr->dims_begin);
+	    }
+
+	    printf("[VENUS] TensorX::reset_data(this=%p, buf=%p, data=%p, bytes=%d, raw_ndims=%ld)\n",
+	           (void*)this_ptr, buf, data_ptr, bytes, raw_ndims);
+	    fflush(stdout);
+
+	    /* Do not touch dims_*; they are owned by set_shape / create_tensor. */
+	    this_ptr->data = data_ptr;
+	    if (bytes > 0) {
+	        this_ptr->bytes = (uint32_t)bytes;
+	    }
+	    /* We do not give ownership of this buffer to TensorX. */
+	    this_ptr->owns_data = 0;
+	    if (this_ptr->align == 0) {
+	        this_ptr->align = 64;
+	    }
+	    /* Keep data_offset as-is; OEM sometimes uses non-zero offsets. */
+	}
+
+	/* TensorX reset_buffer stub (OEM-compatible symbol)
+	 * Signature: void TensorX::reset_buffer(std::shared_ptr<MBuffer>)
+	 * The mangled type encodes std::shared_ptr<MBuffer> by value. On 32-bit
+	 * this is two pointer-sized words (ptr + control-block). We accept them
+	 * as two opaque void* slots to avoid instantiating std::shared_ptr here,
+	 * which would otherwise run its destructor and interact with an OEM
+	 * control-block layout we don't fully emulate yet.
+	 */
+	extern "C" void _ZN5magik5venus7TensorX12reset_bufferESt10shared_ptrINS0_7MBufferEE(
+	    TensorX *this_ptr, void *sptr_slot0, void *sptr_slot1) {
+	    printf("[VENUS] TensorX::reset_buffer(this=%p, sptr0=%p, sptr1=%p) [stub/no-op]\n",
+	           (void*)this_ptr, sptr_slot0, sptr_slot1);
+	    fflush(stdout);
+	    /* Intentionally do nothing: TensorX::data / bytes are managed by
+	     * create_tensor / reset_data. MBuffer/shared_ptr lifetime stays in
+	     * OEM code and is treated as opaque here. */
+	}
+
+	/* TensorX free_mbo stub (OEM-compatible symbol)
+	 * Signature: void TensorX::free_mbo()
+	 * OEM calls into MBuffer::free_data() here. For now we turn this into a
+	 * no-op to avoid double-free of ORAM/DDR buffers that we manage via
+	 * core::oram_malloc / core::oram_free. This may leak small OEM-managed
+	 * host buffers, but that's acceptable for short-lived inference runs.
+	 */
+	extern "C" void _ZN5magik5venus7TensorX8free_mboEv(TensorX *this_ptr) {
+	    printf("[VENUS] TensorX::free_mbo(this=%p, data=%p, bytes=%u) [stub/no-op]\n",
+	           (void*)this_ptr, this_ptr ? this_ptr->data : nullptr,
+	           this_ptr ? this_ptr->bytes : 0u);
+	    fflush(stdout);
+	    /* Do not modify data/bytes/owns_data here. Lifetime is handled by
+	     * MagikModelBase::create_tensor and Tensor wrappers. */
+	}
+
+
 
 /* Core ORAM functions */
 namespace core {
@@ -451,10 +518,33 @@ int MagikModelBase::build_tensors(PyramidConfig *config, std::vector<TensorInfo>
         return 0;
     }
 
+    /* First pass: dump all TensorInfo metadata so we can debug is_input/is_output
+     * flags before any tensor creation. This helps identify mismatch between
+     * how many inputs the metadata declares vs. how many the OEM model thinks
+     * exist.
+     */
+    printf("[VENUS] build_tensors: === TensorInfo metadata dump ===\n");
+    fflush(stdout);
+    for (size_t i = 0; i < infos.size(); ++i) {
+        TensorInfo &ti = infos[i];
+        printf("[VENUS] TensorInfo[%zu]: name='%s' is_input=%u is_output=%u\n",
+               i, ti.name.c_str(), (unsigned)ti.is_input, (unsigned)ti.is_output);
+        printf("        dtype_str='%s' layout='%s' channel=%u\n",
+               ti.dtype_str.c_str(), ti.layout.c_str(), (unsigned)ti.channel);
+        printf("        shape=[");
+        for (size_t j = 0; j < ti.shape.size(); ++j) {
+            printf("%d%s", ti.shape[j], (j + 1 < ti.shape.size()) ? "," : "");
+        }
+        printf("]\n");
+        fflush(stdout);
+    }
+    printf("[VENUS] build_tensors: === End TensorInfo dump ===\n");
+    fflush(stdout);
+
     for (size_t i = 0; i < infos.size(); ++i) {
         TensorInfo &info = infos[i];
-        printf("[VENUS] build_tensors: [%zu] name='%s'\n",
-               i, info.name.c_str());
+        printf("[VENUS] build_tensors: [%zu] name='%s' is_input=%u is_output=%u\n",
+               i, info.name.c_str(), (unsigned)info.is_input, (unsigned)info.is_output);
         fflush(stdout);
 
         printf("[VENUS] build_tensors: calling create_tensor for '%s'\n",
@@ -478,16 +568,31 @@ int MagikModelBase::build_tensors(PyramidConfig *config, std::vector<TensorInfo>
         /* Track tensor in this pyramid configuration. */
         config->tensors_.push_back(wrapper);
 
-        /* For now, map by name in both input and output maps so that
-         * PyramidConfig::get_tensor_wrapper can resolve tensors by name. This
-         * may be refined later once we fully understand OEM input/output flags.
+        /* Populate global input/output vectors based on TensorInfo flags so that
+         * host code can query IO tensors by index without relying on any
+         * DerivedMagikModel overrides whose layout we don't fully control.
          */
-        config->input_tensors_.emplace(info.name, wrapper);
-        config->output_tensors_.emplace(info.name, wrapper);
+        if (info.is_input) {
+            printf("[VENUS] build_tensors: marking '%s' as model INPUT (index=%zu)\n",
+                   info.name.c_str(), inputs_.size());
+            fflush(stdout);
+            inputs_.push_back(wrapper);
+            config->input_tensors_.emplace(info.name, wrapper);
+        }
+
+        if (info.is_output) {
+            printf("[VENUS] build_tensors: marking '%s' as model OUTPUT (index=%zu)\n",
+                   info.name.c_str(), outputs_.size());
+            fflush(stdout);
+            outputs_.push_back(wrapper);
+            config->output_tensors_.emplace(info.name, wrapper);
+        }
     }
 
     printf("[VENUS] build_tensors: built %zu tensors (config=%p, total_tensors=%zu)\n",
            infos.size(), (void*)config, config->tensors_.size());
+    printf("[VENUS] build_tensors: SUMMARY - inputs_.size()=%zu, outputs_.size()=%zu\n",
+           inputs_.size(), outputs_.size());
     fflush(stdout);
 
     return 0;

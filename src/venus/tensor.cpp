@@ -22,15 +22,16 @@ TensorX::TensorX()
       dims_meta0(nullptr),
       dims_meta1(nullptr),
       dims_meta2(nullptr),
-      align(64),
+      align(1),
       dtype(DataType::INT8),
       format(TensorFormat::NHWC),
       bytes(0),
       owns_data(0),
-      reserved3(0),
+      reserved3(-1),
       data_offset(0),
       reserved4(0) {
-    printf("[VENUS] TensorX::TensorX default ctor this=%p (align=%u)\n", (void*)this, align);
+    printf("[VENUS] TensorX::TensorX default ctor this=%p (align=%u, dtype=%d, format=%d)\n",
+           (void*)this, align, (int)dtype, (int)format);
     fflush(stdout);
 }
 
@@ -158,10 +159,62 @@ int TensorX::step(int dim) {
 
 /* TensorX get_bytes_size */
 size_t TensorX::get_bytes_size() const {
-    printf("[VENUS] TensorX::get_bytes_size(this=%p) -> %u\n",
-           (void*)this, bytes);
+    long raw_ndims = 0;
+    if (dims_begin && dims_end) {
+        raw_ndims = static_cast<long>(dims_end - dims_begin);
+    }
+
+    printf("[VENUS] TensorX::get_bytes_size(this=%p) bytes=%u dims_begin=%p dims_end=%p raw_ndims=%ld dtype=%d format=%d\n",
+           (void*)this,
+           bytes,
+           (void*)dims_begin,
+           (void*)dims_end,
+           raw_ndims,
+           (int)dtype,
+           (int)format);
     fflush(stdout);
-    return bytes;
+
+    if (bytes != 0) {
+        return bytes;
+    }
+
+    // Fallback: recompute a conservative size from shape and dtype.
+    size_t elem_count = 1;
+    bool have_shape = false;
+    if (dims_begin && dims_end && dims_end > dims_begin) {
+        long n = static_cast<long>(dims_end - dims_begin);
+        const long kMaxDims = 8;
+        if (n > 0 && n <= kMaxDims) {
+            have_shape = true;
+            for (int i = 0; i < n; ++i) {
+                int32_t d = dims_begin[i];
+                if (d <= 0) {
+                    d = 1;
+                }
+                elem_count *= static_cast<size_t>(d);
+            }
+        }
+    }
+
+    if (!have_shape) {
+        elem_count = 1;
+    }
+
+    int bits = utils::data_type2bits(dtype);
+    if (bits <= 0) {
+        bits = 32;
+    }
+
+    size_t size = elem_count * static_cast<size_t>(bits) / 8;
+    if (size == 0) {
+        size = 1;
+    }
+
+    printf("[VENUS] TensorX::get_bytes_size fallback -> elem_count=%zu bits=%d size=%zu\n",
+           elem_count, bits, size);
+    fflush(stdout);
+
+    return size;
 }
 
 

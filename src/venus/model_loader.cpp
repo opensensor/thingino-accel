@@ -261,24 +261,77 @@ int mgk_model_get_io_tensor_info(void *handle,
     }
 
     TensorXWrapper *wrapper = nullptr;
+
+    /* Use the base-class IO vectors that we populate from TensorInfo flags
+     * during MagikModelBase::build_tensors(). This avoids depending on any
+     * DerivedMagikModel::get_input/get_output overrides whose internal
+     * containers or layouts we don't fully control.
+     *
+     * IMPORTANT: We do NOT fall back to the OEM virtual methods when the index
+     * is out of range. Doing so triggers SIGBUS due to corrupted OEM internal
+     * state. Instead, return -1 immediately to signal "no more tensors".
+     */
     try {
         if (is_input) {
-            wrapper = model->get_input(static_cast<int>(index));
+            if (index < model->inputs_.size()) {
+                wrapper = model->inputs_[index];
+                printf("mgk_model_get_io_tensor_info: using MagikModelBase::inputs_[%u]=%p\n",
+                       index, (void*)wrapper);
+            } else {
+                /* Index out of range - do NOT call OEM virtuals, just return error. */
+                printf("mgk_model_get_io_tensor_info: input index %u out of range (size=%zu) - returning -1\n",
+                       index, model->inputs_.size());
+                return -1;
+            }
         } else {
-            wrapper = model->get_output(static_cast<int>(index));
+            if (index < model->outputs_.size()) {
+                wrapper = model->outputs_[index];
+                printf("mgk_model_get_io_tensor_info: using MagikModelBase::outputs_[%u]=%p\n",
+                       index, (void*)wrapper);
+            } else {
+                /* Index out of range - do NOT call OEM virtuals, just return error. */
+                printf("mgk_model_get_io_tensor_info: output index %u out of range (size=%zu) - returning -1\n",
+                       index, model->outputs_.size());
+                return -1;
+            }
         }
     } catch (...) {
-        printf("mgk_model_get_io_tensor_info: exception while getting tensor (is_input=%d index=%u)\n",
+        printf("mgk_model_get_io_tensor_info: exception while accessing base IO vectors (is_input=%d index=%u)\n",
                is_input, index);
         return -1;
     }
 
+    /* If we got here, wrapper should be valid from the base vectors.
+     * Only fall back to OEM virtuals if the base vectors are completely empty
+     * (i.e., build_tensors was never called or TensorInfo parsing failed entirely).
+     */
+    if (!wrapper && is_input && model->inputs_.empty()) {
+        printf("mgk_model_get_io_tensor_info: inputs_ empty, trying OEM virtual get_input(%u)\n", index);
+        try {
+            wrapper = model->get_input(static_cast<int>(index));
+        } catch (...) {
+            printf("mgk_model_get_io_tensor_info: exception calling OEM get_input(%u)\n", index);
+            return -1;
+        }
+    } else if (!wrapper && !is_input && model->outputs_.empty()) {
+        printf("mgk_model_get_io_tensor_info: outputs_ empty, trying OEM virtual get_output(%u)\n", index);
+        try {
+            wrapper = model->get_output(static_cast<int>(index));
+        } catch (...) {
+            printf("mgk_model_get_io_tensor_info: exception calling OEM get_output(%u)\n", index);
+            return -1;
+        }
+    }
+
     if (!wrapper || !wrapper->tensorx) {
+        printf("mgk_model_get_io_tensor_info: NULL wrapper or tensorx (wrapper=%p)\n",
+               (void*)wrapper);
         return -1;
     }
 
     TensorX *tx = wrapper->tensorx;
     if (!tx) {
+        printf("mgk_model_get_io_tensor_info: wrapper->tensorx is NULL\n");
         return -1;
     }
 
@@ -294,6 +347,19 @@ int mgk_model_get_io_tensor_info(void *handle,
            tx->data,
            (unsigned)tx->bytes,
            (unsigned)tx->data_offset);
+    printf("  TensorX dump: dims_meta0=%p dims_meta1=%p dims_meta2=%p\n",
+           (void*)tx->dims_meta0,
+           (void*)tx->dims_meta1,
+           (void*)tx->dims_meta2);
+    printf("  TensorX dump: align=%u dtype=%d format=%d bytes=%u owns_data=%u reserved3=%d data_offset=%u reserved4=%d\n",
+           (unsigned)tx->align,
+           (int)tx->dtype,
+           (int)tx->format,
+           (unsigned)tx->bytes,
+           (unsigned)tx->owns_data,
+           (int)tx->reserved3,
+           (unsigned)tx->data_offset,
+           (int)tx->reserved4);
     fflush(stdout);
 
     if (!tx->data) {
@@ -313,8 +379,12 @@ int mgk_model_get_io_tensor_info(void *handle,
     int ndim = 0;
 
     /* Obtain shape from TensorX if available. */
+    printf("mgk_model_get_io_tensor_info: about to call get_shape()\n");
+    fflush(stdout);
     try {
         shape_t shape = tx->get_shape();
+        printf("mgk_model_get_io_tensor_info: get_shape() returned, size=%zu\n", shape.size());
+        fflush(stdout);
         ndim = static_cast<int>(shape.size());
         if (ndim <= 0) {
             ndim = 1;
@@ -333,11 +403,20 @@ int mgk_model_get_io_tensor_info(void *handle,
                 dims_out[i] = d;
             }
         }
+        printf("mgk_model_get_io_tensor_info: shape processing done, ndim=%d (shape will be destroyed after this line)\n", ndim);
+        fflush(stdout);
+        /* Shape vector destructor runs at end of this block - add explicit scope to isolate crash. */
     } catch (...) {
         /* On any failure, keep default dims and ndim=1. */
+        printf("mgk_model_get_io_tensor_info: get_shape() threw exception\n");
+        fflush(stdout);
         ndim = 1;
     }
+    printf("mgk_model_get_io_tensor_info: try-catch block complete, shape destroyed, ndim=%d\n", ndim);
+    fflush(stdout);
 
+    printf("mgk_model_get_io_tensor_info: setting *ndim_out=%d\n", ndim);
+    fflush(stdout);
     *ndim_out = ndim;
 
     /* Map Venus DataType to NNA dtype. */
@@ -384,8 +463,28 @@ size_t mgk_model_get_forward_memory_size(void *handle)
         return 0;
     }
 
+    /*
+     * IMPORTANT:
+     * -----------
+     *
+     * Calling through the virtual `MagikModelBase::get_forward_memory_size()`
+     * can dispatch into the OEM-derived vtable inside the .mgk. Our current
+     * reverse-engineered class layout is good enough for data members and the
+     * non-virtual helpers used during build_tensors(), but the vtable layout
+     * for some models is still fragile. In particular, letting this call go
+     * through the vtable has been observed to jump to the RTTI object for
+     * `magik::venus::layer::ConvParam`, causing a SIGBUS at
+     * `_ZTIN5magik5venus5layer9ConvParamE`.
+     *
+     * To keep things robust while we refine the ABI, we explicitly bind to the
+     * base-class implementation. That implementation only walks
+     * `pyramid_configs_` and `TensorXWrapper` instances that we construct in
+     * our own `MagikModelBase::build_tensors`, so it stays entirely within our
+     * controlled code and data structures.
+     */
     try {
-        return model->get_forward_memory_size();
+        const MagikModelBase *base = model;
+        return base->MagikModelBase::get_forward_memory_size();
     } catch (...) {
         printf("mgk_model_get_forward_memory_size: exception while querying size\n");
         return 0;
