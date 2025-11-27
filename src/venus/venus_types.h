@@ -74,6 +74,27 @@ struct DataAttribute {
     // Intentionally empty placeholder; we never access fields directly.
 };
 
+/* Opaque kernel parameter type used by OEM Magik kernels. */
+namespace kernel {
+    struct KernelParam {
+        // Placeholder; actual layout lives inside OEM binaries.
+    };
+}
+
+/* Opaque operator configuration type for OEM Magik kernels. */
+struct OpConfig {
+    // Placeholder; used only via pointers.
+};
+
+/* Generic return value type used by Magik/Venus helpers and kernel
+ * parameter init routines. OEM code generally treats this as an integer
+ * status code.
+ */
+struct ReturnValue {
+    int code;
+    ReturnValue(int c = 0) : code(c) {}
+};
+
 
 /* Utility functions namespace */
 namespace utils {

@@ -20,12 +20,29 @@ extern "C" {
 namespace magik {
 namespace venus {
 
-/* Type for DerivedMagikModel constructor
- * Note: Third parameter is void*& (reference) - constructor may modify it
+/* NOTE: The OEM .mgk exposes a C factory function `create` that, based on
+ * reverse engineering, wraps `DerivedMagikModel::DerivedMagikModel` with the
+ * following signature:
+ *
+ *   DerivedMagikModel(long long, long long,
+ *                     void*, void*, void*,
+ *                     ModelMemoryInfoManager::MemAllocMode,
+ *                     MagikModelBase::ModuleMode);
+ *
+ * The C `create` factory uses the *same* parameter list (minus `this`) and
+ * simply forwards all arguments into the derived constructor. Our call site in
+ * this file must therefore use an identical function type; using a smaller
+ * or different signature leads to arguments being misaligned and random stack
+ * data being interpreted as pointers / enum values inside the model.
  */
-typedef MagikModelBase* (*ModelConstructor)(long long, long long, void*&, void*, void*,
-                                             ModelMemoryInfoManager::MemAllocMode,
-                                             MagikModelBase::ModuleMode);
+typedef MagikModelBase* (*CreateFunction)(
+    long long param1,
+    long long param2,
+    void *param3,
+    void *param4,
+    void *param5,
+    ModelMemoryInfoManager::MemAllocMode mem_mode,
+    MagikModelBase::ModuleMode module_mode);
 
 /* Model loader implementation */
 struct ModelLoader {
@@ -88,10 +105,10 @@ void* load_mgk_model(const char *path) {
     printf("load_mgk_model: Looking for 'create' function...\n");
     fflush(stdout);
 
-    /* The create function likely takes parameters for ORAM and DDR base addresses
-     * Signature might be: create(void *oram_base, void *ddr_base, void *param3, void *param4)
+    /* Look up the C `create` factory exported by the .mgk. Its true
+     * signature mirrors the OEM-derived constructor (see the
+     * magik::venus::CreateFunction typedef above).
      */
-    typedef MagikModelBase* (*CreateFunction)(void*, void*, void*, void*);
     CreateFunction create_fn = (CreateFunction)dlsym(loader->dl_handle, "create");
 
     if (!create_fn) {
@@ -104,15 +121,33 @@ void* load_mgk_model(const char *path) {
     printf("Found 'create' function at %p\n", (void*)create_fn);
     fflush(stdout);
 
-    /* Call the create function to instantiate the model */
-    printf("Calling create(__oram_vbase=%p, __ddr_vbase=%p, NULL, NULL)...\n", __oram_vbase, __ddr_vbase);
+    /* Call the create function to instantiate the model. We now pass
+     * a full, well-defined argument set that matches the OEM-derived
+     * signature instead of relying on an underspecified 4-arg shim.
+     */
+    long long param1 = 0;
+    long long param2 = 0;
+    void *param3 = __oram_vbase;
+    void *param4 = __ddr_vbase;
+    void *param5 = nullptr;
+    ModelMemoryInfoManager::MemAllocMode mem_mode =
+        ModelMemoryInfoManager::MemAllocMode::DEFAULT;
+    MagikModelBase::ModuleMode module_mode = MagikModelBase::ModuleMode::NORMAL;
+
+    printf("Calling create(param1=%lld, param2=%lld, oram=%p, ddr=%p, extra=%p, mem_mode=%d, module_mode=%d)"\
+           "...\n",
+           (long long)param1, (long long)param2,
+           param3, param4, param5,
+           (int)mem_mode, (int)module_mode);
     fflush(stdout);
 
     try {
         printf("About to call create_fn...\n");
         fflush(stdout);
 
-        loader->model_instance = create_fn(__oram_vbase, __ddr_vbase, nullptr, nullptr);
+        loader->model_instance = create_fn(param1, param2,
+                                           param3, param4, param5,
+                                           mem_mode, module_mode);
 
         printf("create() returned: %p\n", (void*)loader->model_instance);
         fflush(stdout);
