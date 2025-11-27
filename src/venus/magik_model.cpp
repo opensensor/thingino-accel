@@ -26,20 +26,83 @@ namespace venus {
 Device::Device() {}
 Device::~Device() {}
 
-/* TensorXWrapper implementation */
-TensorXWrapper::TensorXWrapper() : tensorx(nullptr) {
-    printf("[VENUS] TensorXWrapper::TensorXWrapper() default constructor\n");
+/* TensorXWrapper implementation - layout aligned with OEM libmert. */
+TensorXWrapper::TensorXWrapper()
+    : tensorx(nullptr), name(), flush_status(FlushCacheStatus::DISABLED) {
+    printf("[VENUS] TensorXWrapper::TensorXWrapper() default constructor (this=%p)\n",
+           (void*)this);
     fflush(stdout);
 }
 
-TensorXWrapper::TensorXWrapper(TensorX *tx) : tensorx(tx) {
-    printf("[VENUS] TensorXWrapper::TensorXWrapper(tx=%p)\n", (void*)tx);
+TensorXWrapper::TensorXWrapper(TensorX *tx)
+    : tensorx(tx), name(), flush_status(FlushCacheStatus::DISABLED) {
+    printf("[VENUS] TensorXWrapper::TensorXWrapper(tx=%p, this=%p)\n",
+           (void*)tx, (void*)this);
+    fflush(stdout);
+}
+
+TensorXWrapper::TensorXWrapper(TensorX *tx, std::string n)
+    : tensorx(tx), name(std::move(n)), flush_status(FlushCacheStatus::DISABLED) {
+    printf("[VENUS] TensorXWrapper::TensorXWrapper(tx=%p, name=%s, this=%p)\n",
+           (void*)tx, name.c_str(), (void*)this);
+    fflush(stdout);
+}
+
+TensorXWrapper::TensorXWrapper(TensorX *tx, std::string n, FlushCacheStatus status)
+    : tensorx(tx), name(std::move(n)), flush_status(status) {
+    printf("[VENUS] TensorXWrapper::TensorXWrapper(tx=%p, name=%s, status=%d, this=%p)\n",
+           (void*)tx, name.c_str(), (int)flush_status, (void*)this);
     fflush(stdout);
 }
 
 TensorXWrapper::~TensorXWrapper() {
-    printf("[VENUS] TensorXWrapper::~TensorXWrapper(this=%p)\n", (void*)this);
+    printf("[VENUS] TensorXWrapper::~TensorXWrapper(this=%p, tensorx=%p, status=%d)\n",
+           (void*)this, (void*)tensorx, (int)flush_status);
     fflush(stdout);
+}
+
+void TensorXWrapper::set_content(TensorX *tx) {
+    printf("[VENUS] TensorXWrapper::set_content(this=%p, tx=%p)\n",
+           (void*)this, (void*)tx);
+    tensorx = tx;
+}
+
+TensorX *TensorXWrapper::get_content() const {
+    printf("[VENUS] TensorXWrapper::get_content(this=%p) -> %p\n",
+           (void*)this, (void*)tensorx);
+    return tensorx;
+}
+
+void TensorXWrapper::set_flush_cache_status(FlushCacheStatus status) {
+    printf("[VENUS] TensorXWrapper::set_flush_cache_status(this=%p, status=%d)\n",
+           (void*)this, (int)status);
+    flush_status = status;
+}
+
+FlushCacheStatus TensorXWrapper::get_flush_cache_status() const {
+    return flush_status;
+}
+
+std::string TensorXWrapper::get_name() const {
+    return name;
+}
+
+int TensorXWrapper::flush_cache() {
+    /* OEM implementation checks flush_status and, if enabled, flushes the
+     * underlying TensorX data cache via __aie_flushcache_dir.
+     * For now we only log and pretend success when enabled.
+     */
+    if (flush_status != FlushCacheStatus::ENABLE_ONCE &&
+        flush_status != FlushCacheStatus::ENABLE_ALWAYS) {
+        return 1;
+    }
+
+    printf("[VENUS] TensorXWrapper::flush_cache(this=%p, tensorx=%p, status=%d)\n",
+           (void*)this, (void*)tensorx, (int)flush_status);
+    fflush(stdout);
+
+    // TODO: call into NNA cache flush when we have a confirmed implementation.
+    return 1;
 }
 
 /* TensorX constructor with size, data pointer, and device */
@@ -1019,18 +1082,40 @@ extern "C" int _Z12get_string_tRNSt7__cxx1112basic_stringIcSt11char_traitsIcESaI
 // Mangled name (from AEC_T41_16K_NS_OUT_UC.mgk):
 //   _Z17read_common_paramRNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEERSt6vectorIS4_SaIS4_EES9_RS6_IiSaIiEES9_S9_RiS9_S5_PKvSD_
 //
-// The OEM implementation walks a kernel-parameter blob pointed to by `param`
-// and fills a collection of strings and vectors (layer name, bottoms/tops,
-// extra options, etc.). For this demo we interpose a conservative shim that
-// *does not* touch any arguments, to avoid dereferencing potentially bogus
-// param pointers. We simply log the call site and return 0 as a generic
-// "success" / index value.
+// Our goal here is to move closer to the real OEM semantics while still keeping
+// extremely strong safety guarantees. We now expose a fully-typed signature,
+// and we *do* parse strings from the param blob via our hardened
+// get_string_t/get_string_vector_t overrides, but we deliberately keep the
+// caller-visible `index` cursor unchanged so we do not yet alter how the .mgk
+// code walks the parameter buffer.
 extern "C" int
-read_common_param_shim(...) __asm__(
-    "_Z17read_common_paramRNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEERSt6vectorIS4_SaIS4_EES9_RS6_IiSaIiEES9_S9_RiS9_S5_PKvSD_");
+read_common_param_shim(
+    std::string &layer_name,
+    std::vector<std::string> &bottoms,
+    std::vector<std::string> &tops,
+    std::vector<int> &int_params,
+    std::vector<std::string> &extra_strs1,
+    std::vector<std::string> &extra_strs2,
+    int &some_flag,
+    std::vector<std::string> &extra_strs3,
+    std::string &extra_str,
+    const void *param,
+    int &index)
+    __asm__("_Z17read_common_paramRNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEERSt6vectorIS4_SaIS4_EES9_RS6_IiSaIiEES9_S9_RiS9_S5_PKvSD_");
 
 extern "C" int
-read_common_param_shim(...)
+read_common_param_shim(
+    std::string &layer_name,
+    std::vector<std::string> &bottoms,
+    std::vector<std::string> &tops,
+    std::vector<int> &int_params,
+    std::vector<std::string> &extra_strs1,
+    std::vector<std::string> &extra_strs2,
+    int &some_flag,
+    std::vector<std::string> &extra_strs3,
+    std::string &extra_str,
+    const void *param,
+    int &index)
 {
     void *ra0 = __builtin_return_address(0);
     Dl_info info0;
@@ -1043,16 +1128,42 @@ read_common_param_shim(...)
         off = (unsigned long)((char *)ra0 - (char *)info0.dli_saddr);
     }
 
+    // Reset outputs to known-safe defaults.
+    bottoms.clear();
+    tops.clear();
+    int_params.clear();
+    extra_strs1.clear();
+    extra_strs2.clear();
+    extra_strs3.clear();
+    some_flag = 0;
+    extra_str.clear();
+
+    int local_index = index;
+
+    // Safely try to decode the layer name and bottom/top tensor names without
+    // affecting the caller's view of `index`.
+    magik::_Z12get_string_tRNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEPKvRi(
+        layer_name, param, local_index);
+    magik::_Z19get_string_vector_tRSt6vectorINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESaIS5_EEPKvRi(
+        bottoms, param, local_index);
+    magik::_Z19get_string_vector_tRSt6vectorINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESaIS5_EEPKvRi(
+        tops, param, local_index);
+
     std::fprintf(stderr,
-                 "[VENUS] read_common_param shim (raw) called\n"
-                 "  ra0=%p (obj=%s, symbol=%s+0x%lx)\n",
-                 ra0, obj, sym, off);
+                 "[VENUS] read_common_param\n"
+                 "  ra0=%p (obj=%s, symbol=%s+0x%lx)\n"
+                 "  param=%p index=%d local_index=%d\n"
+                 "  layer=\"%s\" bottoms=%zu tops=%zu\n",
+                 ra0, obj, sym, off,
+                 param, index, local_index,
+                 layer_name.c_str(),
+                 bottoms.size(), tops.size());
     std::fflush(stderr);
 
-    // Return 0 as a conservative success / index value. Callers that use the
-    // return value as an index will simply see 0; callers that ignore it are
-    // unaffected. In all cases, we avoid reading from `param`.
-    return 0;
+    // For now we intentionally do *not* modify `index` and simply return its
+    // incoming value. This preserves the original stubbed walking behaviour
+    // while giving us real names and I/O lists for reverse-engineering.
+    return index;
 }
 
 // Shim for OEM read_layer_param used by .mgk models.
@@ -1060,16 +1171,28 @@ read_common_param_shim(...)
 // Mangled name (from AEC_T41_16K_NS_OUT_UC.mgk backtrace):
 //   _Z16read_layer_paramRiRtRyRjPKvS_
 //
-// The OEM implementation parses per-layer parameters from a kernel-parameter
-// blob and writes into several reference outputs. For this demo we interpose a
-// conservative shim that does not touch any arguments, to avoid dereferencing
-// potentially bogus pointers like 0xd9a. We simply log the call site and
-// return 0 as a benign status.
+// We now expose a typed signature but still behave conservatively: we do not
+// touch the param blob yet and we leave all outputs at safe defaults. This
+// lets us collect call-site information without changing how the .mgk code
+// iterates the parameter buffer.
 extern "C" int
-read_layer_param_shim(...) __asm__("_Z16read_layer_paramRiRtRyRjPKvS_");
+read_layer_param_shim(
+    int &op_type,
+    unsigned short &layer_id,
+    unsigned long long &param_index,
+    unsigned int &flags,
+    const void *param,
+    int &index)
+    __asm__("_Z16read_layer_paramRiRtRyRjPKvS_");
 
 extern "C" int
-read_layer_param_shim(...)
+read_layer_param_shim(
+    int &op_type,
+    unsigned short &layer_id,
+    unsigned long long &param_index,
+    unsigned int &flags,
+    const void *param,
+    int &index)
 {
     void *ra0 = __builtin_return_address(0);
     Dl_info info0;
@@ -1082,13 +1205,20 @@ read_layer_param_shim(...)
         off = (unsigned long)((char *)ra0 - (char *)info0.dli_saddr);
     }
 
+    op_type = 0;
+    layer_id = 0;
+    param_index = 0;
+    flags = 0;
+
     std::fprintf(stderr,
-                 "[VENUS] read_layer_param shim (raw) called\n"
-                 "  ra0=%p (obj=%s, symbol=%s+0x%lx)\n",
-                 ra0, obj, sym, off);
+                 "[VENUS] read_layer_param\n"
+                 "  ra0=%p (obj=%s, symbol=%s+0x%lx)\n"
+                 "  param=%p index=%d\n",
+                 ra0, obj, sym, off,
+                 param, index);
     std::fflush(stderr);
 
-    return 0;
+    return index;
 }
 
 

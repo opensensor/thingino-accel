@@ -69,15 +69,36 @@ public:
     ~Device();
 };
 
-/* TensorX wrapper */
+/* TensorX wrapper - layout must match OEM (sizeof == 0x20).
+ * Fields and ordering are reconstructed from libmert smart diff:
+ *   0x00: TensorX*          content/tensorx
+ *   0x04: std::string       name
+ *   0x1c: FlushCacheStatus  flush_status
+ */
 class TensorXWrapper {
 public:
-    TensorX *tensorx;
+    TensorX *tensorx;              /* 0x00 - content pointer */
+    std::string name;              /* 0x04 */
+    FlushCacheStatus flush_status; /* 0x1c */
 
     TensorXWrapper();
     TensorXWrapper(TensorX *tx);
+    TensorXWrapper(TensorX *tx, std::string n);
+    TensorXWrapper(TensorX *tx, std::string n, FlushCacheStatus status);
     ~TensorXWrapper();
+
+    void set_content(TensorX *tx);
+    TensorX *get_content() const;
+
+    void set_flush_cache_status(FlushCacheStatus status);
+    FlushCacheStatus get_flush_cache_status() const;
+
+    std::string get_name() const;
+    int flush_cache();
 };
+
+static_assert(sizeof(TensorXWrapper) == 0x20,
+              "TensorXWrapper size must match OEM (0x20 bytes)");
 
 /* Core ORAM functions */
 namespace core {

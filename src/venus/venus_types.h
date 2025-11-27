@@ -62,6 +62,16 @@ enum class ChannelLayout : int {
     FP = 6
 };
 
+/* Flush cache status used by TensorXWrapper.
+ * Values are chosen to match the OEM semantics observed in libmert:
+ *   0 = disabled, 1 = flush once, 2 = always flush.
+ */
+enum class FlushCacheStatus : int {
+    DISABLED = 0,
+    ENABLE_ONCE = 1,
+    ENABLE_ALWAYS = 2,
+};
+
 /* Shape type */
 using shape_t = std::vector<int32_t>;
 

@@ -278,6 +278,24 @@ int mgk_model_get_io_tensor_info(void *handle,
     }
 
     TensorX *tx = wrapper->tensorx;
+    if (!tx) {
+        return -1;
+    }
+
+    long raw_ndims = 0;
+    if (tx->dims_begin && tx->dims_end) {
+        raw_ndims = static_cast<long>(tx->dims_end - tx->dims_begin);
+    }
+    printf("mgk_model_get_io_tensor_info: tx=%p dims_begin=%p dims_end=%p raw_ndims=%ld data=%p bytes=%u offset=%u\n",
+           (void*)tx,
+           (void*)tx->dims_begin,
+           (void*)tx->dims_end,
+           raw_ndims,
+           tx->data,
+           (unsigned)tx->bytes,
+           (unsigned)tx->data_offset);
+    fflush(stdout);
+
     if (!tx->data) {
         /* No backing buffer; nothing we can expose. */
         return -1;
