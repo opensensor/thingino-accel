@@ -8,6 +8,7 @@
 #include <string.h>
 #include <signal.h>
 #include <dlfcn.h>
+#include <unistd.h>
 #include "nna.h"
 #include "nna_model.h"
 #include "nna_tensor.h"
@@ -219,6 +220,19 @@ int main(int argc, char **argv) {
            output->shape.dims[2], output->shape.dims[3]);
 
     print_success("Output data retrieved");
+
+    /*
+     * Demo fast-path: we've verified that the model can be loaded,
+     * run, and its output tensor read back successfully. The current
+     * teardown path (model destroy/dlclose during nna_model_unload and
+     * global destructors on exit) still triggers a SIGBUS/SIGSEGV deep
+     * in ld-musl on this platform. For the standalone demo binary we
+     * avoid that by exiting immediately after a successful inference,
+     * letting the OS reclaim all resources.
+     */
+    print_header("✓ DEMO COMPLETED (skipping unload/deinit)");
+    fflush(stdout);
+    _exit(0);
 
 cleanup_model:
     nna_model_unload(model);

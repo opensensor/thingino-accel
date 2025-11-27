@@ -236,16 +236,75 @@ nna_tensor_t* nna_model_get_input(nna_model_t *model, uint32_t index) {
         return NULL;
     }
 
-    /* TODO: Return actual input tensor */
-    /* For now, create a dummy tensor */
     if (model->inputs == NULL) {
         model->inputs = calloc(model->num_inputs, sizeof(nna_tensor_t*));
+        if (model->inputs == NULL) {
+            return NULL;
+        }
     }
 
     if (model->inputs[index] == NULL) {
-        /* Create placeholder tensor */
-        nna_shape_t shape = {{1, 16, 1, 1}, 4};  /* N=1, H=16, W=1, C=1 */
-        model->inputs[index] = nna_tensor_create(&shape, NNA_DTYPE_INT8, NNA_FORMAT_NHWC);
+        /* Prefer wiring to real .mgk input tensors when available. */
+        void *data = NULL;
+        int dims[4] = {1, 1, 1, 1};
+        int ndim = 0;
+        int dtype_code = NNA_DTYPE_UINT8;
+        int format_code = NNA_FORMAT_NHWC;
+
+        /* Ensure .mgk model is loaded so that we can query its tensors. */
+        if (model->mgk_model_handle == NULL && model->model_path != NULL) {
+            printf("nna_model_get_input: loading .mgk model for IO tensor query: %s\n",
+                   model->model_path);
+            model->mgk_model_handle = load_mgk_model(model->model_path);
+            if (model->mgk_model_handle == NULL) {
+                fprintf(stderr, "nna_model_get_input: load_mgk_model failed, falling back to dummy tensor\n");
+            } else {
+                printf("nna_model_get_input: .mgk model loaded successfully\n");
+            }
+        }
+
+        int wired = 0;
+        if (model->mgk_model_handle != NULL) {
+            int rc = mgk_model_get_io_tensor_info(model->mgk_model_handle,
+                                                  1, /* is_input */
+                                                  index,
+                                                  &data,
+                                                  dims,
+                                                  &ndim,
+                                                  &dtype_code,
+                                                  &format_code);
+            if (rc == 0 && data != NULL && ndim > 0 && ndim <= 4) {
+                nna_shape_t shape;
+                int i;
+                for (i = 0; i < 4; i++) {
+                    if (i < ndim) {
+                        shape.dims[i] = (int32_t)dims[i];
+                    } else {
+                        shape.dims[i] = 1;
+                    }
+                }
+                shape.ndim = ndim;
+
+                nna_dtype_t dtype = (nna_dtype_t)dtype_code;
+                nna_format_t format = (nna_format_t)format_code;
+
+                model->inputs[index] = nna_tensor_from_data(data, &shape, dtype, format);
+                if (model->inputs[index] != NULL) {
+                    wired = 1;
+                } else {
+                    fprintf(stderr, "nna_model_get_input: nna_tensor_from_data failed, falling back to dummy tensor\n");
+                }
+            } else {
+                fprintf(stderr, "nna_model_get_input: mgk_model_get_io_tensor_info failed for input %u, falling back to dummy tensor\n",
+                        (unsigned int)index);
+            }
+        }
+
+        if (!wired) {
+            /* Create placeholder tensor (legacy behavior). */
+            nna_shape_t shape = {{1, 16, 1, 1}, 4};  /* N=1, H=16, W=1, C=1 */
+            model->inputs[index] = nna_tensor_create(&shape, NNA_DTYPE_INT8, NNA_FORMAT_NHWC);
+        }
     }
 
     return model->inputs[index];
@@ -263,14 +322,72 @@ const nna_tensor_t* nna_model_get_output(nna_model_t *model, uint32_t index) {
         return NULL;
     }
 
-    /* TODO: Return actual output tensor */
     if (model->outputs == NULL) {
         model->outputs = calloc(model->num_outputs, sizeof(nna_tensor_t*));
+        if (model->outputs == NULL) {
+            return NULL;
+        }
     }
 
     if (model->outputs[index] == NULL) {
-        nna_shape_t shape = {{1, 16, 1, 1}, 4};
-        model->outputs[index] = nna_tensor_create(&shape, NNA_DTYPE_INT8, NNA_FORMAT_NHWC);
+        void *data = NULL;
+        int dims[4] = {1, 1, 1, 1};
+        int ndim = 0;
+        int dtype_code = NNA_DTYPE_UINT8;
+        int format_code = NNA_FORMAT_NHWC;
+
+        if (model->mgk_model_handle == NULL && model->model_path != NULL) {
+            printf("nna_model_get_output: loading .mgk model for IO tensor query: %s\n",
+                   model->model_path);
+            model->mgk_model_handle = load_mgk_model(model->model_path);
+            if (model->mgk_model_handle == NULL) {
+                fprintf(stderr, "nna_model_get_output: load_mgk_model failed, falling back to dummy tensor\n");
+            } else {
+                printf("nna_model_get_output: .mgk model loaded successfully\n");
+            }
+        }
+
+        int wired = 0;
+        if (model->mgk_model_handle != NULL) {
+            int rc = mgk_model_get_io_tensor_info(model->mgk_model_handle,
+                                                  0, /* is_input */
+                                                  index,
+                                                  &data,
+                                                  dims,
+                                                  &ndim,
+                                                  &dtype_code,
+                                                  &format_code);
+            if (rc == 0 && data != NULL && ndim > 0 && ndim <= 4) {
+                nna_shape_t shape;
+                int i;
+                for (i = 0; i < 4; i++) {
+                    if (i < ndim) {
+                        shape.dims[i] = (int32_t)dims[i];
+                    } else {
+                        shape.dims[i] = 1;
+                    }
+                }
+                shape.ndim = ndim;
+
+                nna_dtype_t dtype = (nna_dtype_t)dtype_code;
+                nna_format_t format = (nna_format_t)format_code;
+
+                model->outputs[index] = nna_tensor_from_data(data, &shape, dtype, format);
+                if (model->outputs[index] != NULL) {
+                    wired = 1;
+                } else {
+                    fprintf(stderr, "nna_model_get_output: nna_tensor_from_data failed, falling back to dummy tensor\n");
+                }
+            } else {
+                fprintf(stderr, "nna_model_get_output: mgk_model_get_io_tensor_info failed for output %u, falling back to dummy tensor\n",
+                        (unsigned int)index);
+            }
+        }
+
+        if (!wired) {
+            nna_shape_t shape = {{1, 16, 1, 1}, 4};
+            model->outputs[index] = nna_tensor_create(&shape, NNA_DTYPE_INT8, NNA_FORMAT_NHWC);
+        }
     }
 
     return model->outputs[index];

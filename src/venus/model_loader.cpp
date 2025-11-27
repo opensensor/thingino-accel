@@ -8,6 +8,7 @@
 #include <dlfcn.h>
 #include <cstdio>
 #include <cstring>
+#include "../../include/nna_types.h"
 
 /* C linkage for functions called from C code */
 extern "C" {
@@ -237,6 +238,120 @@ void unload_mgk_model(void *handle) {
     }
 
     delete loader;
+}
+
+int mgk_model_get_io_tensor_info(void *handle,
+                                 int is_input,
+                                 unsigned int index,
+                                 void **data_out,
+                                 int dims_out[4],
+                                 int *ndim_out,
+                                 int *dtype_out,
+                                 int *format_out)
+{
+    if (!handle || !data_out || !dims_out || !ndim_out ||
+        !dtype_out || !format_out) {
+        return -1;
+    }
+
+    ModelLoader *loader = static_cast<ModelLoader*>(handle);
+    MagikModelBase *model = loader ? loader->model_instance : nullptr;
+    if (!model) {
+        return -1;
+    }
+
+    TensorXWrapper *wrapper = nullptr;
+    try {
+        if (is_input) {
+            wrapper = model->get_input(static_cast<int>(index));
+        } else {
+            wrapper = model->get_output(static_cast<int>(index));
+        }
+    } catch (...) {
+        printf("mgk_model_get_io_tensor_info: exception while getting tensor (is_input=%d index=%u)\n",
+               is_input, index);
+        return -1;
+    }
+
+    if (!wrapper || !wrapper->tensorx) {
+        return -1;
+    }
+
+    TensorX *tx = wrapper->tensorx;
+    if (!tx->data) {
+        /* No backing buffer; nothing we can expose. */
+        return -1;
+    }
+
+    /* Compute logical data pointer: base + data_offset. */
+    unsigned char *base = static_cast<unsigned char *>(tx->data);
+    unsigned char *ptr  = base + tx->data_offset;
+    *data_out = static_cast<void *>(ptr);
+
+    /* Default dims and ndim. */
+    for (int i = 0; i < 4; ++i) {
+        dims_out[i] = 1;
+    }
+    int ndim = 0;
+
+    /* Obtain shape from TensorX if available. */
+    try {
+        shape_t shape = tx->get_shape();
+        ndim = static_cast<int>(shape.size());
+        if (ndim <= 0) {
+            ndim = 1;
+        } else if (ndim > 4) {
+            /* Collapse extra dimensions into the first one. */
+            size_t total = 1;
+            for (size_t i = 0; i < shape.size(); ++i) {
+                int32_t d = shape[i] > 0 ? shape[i] : 1;
+                total *= static_cast<size_t>(d);
+            }
+            dims_out[0] = static_cast<int>(total);
+            ndim = 1;
+        } else {
+            for (int i = 0; i < ndim; ++i) {
+                int32_t d = shape[i] > 0 ? shape[i] : 1;
+                dims_out[i] = d;
+            }
+        }
+    } catch (...) {
+        /* On any failure, keep default dims and ndim=1. */
+        ndim = 1;
+    }
+
+    *ndim_out = ndim;
+
+    /* Map Venus DataType to NNA dtype. */
+    nna_dtype_t nna_dtype = NNA_DTYPE_UINT8;
+    switch (tx->dtype) {
+        case DataType::FP32:  nna_dtype = NNA_DTYPE_FLOAT32; break;
+        case DataType::UINT32: nna_dtype = NNA_DTYPE_UINT32; break;
+        case DataType::INT32:  nna_dtype = NNA_DTYPE_INT32;  break;
+        case DataType::UINT16: nna_dtype = NNA_DTYPE_UINT16; break;
+        case DataType::INT16:  nna_dtype = NNA_DTYPE_INT16;  break;
+        case DataType::UINT8:  nna_dtype = NNA_DTYPE_UINT8;  break;
+        case DataType::INT8:   nna_dtype = NNA_DTYPE_INT8;   break;
+        default:
+            nna_dtype = NNA_DTYPE_UINT8;
+            break;
+    }
+    *dtype_out = static_cast<int>(nna_dtype);
+
+    /* Map Venus TensorFormat to NNA format. */
+    nna_format_t nna_fmt = NNA_FORMAT_NHWC;
+    switch (tx->format) {
+        case TensorFormat::NV12:
+            nna_fmt = NNA_FORMAT_NV12;
+            break;
+        case TensorFormat::NHWC:
+        default:
+            nna_fmt = NNA_FORMAT_NHWC;
+            break;
+    }
+    *format_out = static_cast<int>(nna_fmt);
+
+    return 0;
 }
 
 } // extern "C"

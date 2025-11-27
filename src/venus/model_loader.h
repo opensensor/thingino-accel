@@ -33,6 +33,22 @@ void unload_mgk_model(void *handle);
  */
 void* get_mgk_model_instance(void *handle);
 
+/*
+ * Query basic information about an input or output tensor.
+ *
+ * is_input: non-zero for inputs, 0 for outputs.
+ * index:    tensor index (0-based).
+ * On success returns 0 and fills all out-parameters; otherwise returns -1.
+ */
+int mgk_model_get_io_tensor_info(void *handle,
+                                 int is_input,
+                                 unsigned int index,
+                                 void **data_out,
+                                 int dims_out[4],
+                                 int *ndim_out,
+                                 int *dtype_out,
+                                 int *format_out);
+
 #ifdef __cplusplus
 }
 #endif
