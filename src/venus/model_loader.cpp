@@ -354,5 +354,25 @@ int mgk_model_get_io_tensor_info(void *handle,
     return 0;
 }
 
+size_t mgk_model_get_forward_memory_size(void *handle)
+{
+    if (!handle) {
+        return 0;
+    }
+
+    ModelLoader *loader = static_cast<ModelLoader*>(handle);
+    MagikModelBase *model = loader ? loader->model_instance : nullptr;
+    if (!model) {
+        return 0;
+    }
+
+    try {
+        return model->get_forward_memory_size();
+    } catch (...) {
+        printf("mgk_model_get_forward_memory_size: exception while querying size\n");
+        return 0;
+    }
+}
+
 } // extern "C"
 

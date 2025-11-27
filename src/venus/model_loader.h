@@ -5,20 +5,22 @@
 #ifndef THINGINO_ACCEL_MODEL_LOADER_H
 #define THINGINO_ACCEL_MODEL_LOADER_H
 
+#include <stddef.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 /*
  * Load a .mgk model file and instantiate the model class
- * 
+ *
  * Returns opaque handle to model instance, or NULL on failure
  */
 void* load_mgk_model(const char *path);
 
 /*
  * Run inference on a loaded model
- * 
+ *
  * Returns 0 on success, -1 on failure
  */
 int run_mgk_model(void *handle);
@@ -48,6 +50,12 @@ int mgk_model_get_io_tensor_info(void *handle,
                                  int *ndim_out,
                                  int *dtype_out,
                                  int *format_out);
+
+/*
+ * Get the forward memory requirement (in bytes) as computed by the
+ * MagikModelBase implementation. Returns 0 on failure.
+ */
+size_t mgk_model_get_forward_memory_size(void *handle);
 
 #ifdef __cplusplus
 }

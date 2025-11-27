@@ -1,6 +1,6 @@
 /*
  * thingino-accel - Model Loading and Inference
- * 
+ *
  * Implementation of .mgk model loading and inference execution
  */
 
@@ -54,7 +54,7 @@ struct nna_model {
     uint32_t num_outputs;
 
     void *forward_memory;    /* Forward pass working memory */
-    size_t forward_mem_size;
+    size_t forward_mem_size; /* Cached forward memory requirement */
     int owns_forward_mem;    /* 1 if we allocated it */
 };
 
@@ -80,27 +80,111 @@ static void* get_section_data(nna_model_t *model, const char *name) {
     return (char*)model->model_data + shdr->sh_offset;
 }
 
+/*
+ * Helper: use the C++ Magik/Venus model (if available) to refine the
+ * number of inputs/outputs based on the real tensor descriptors.
+ */
+static void nna_model_refresh_io_from_mgk(nna_model_t *model)
+{
+    if (!model) {
+        return;
+    }
+
+    if (!model->model_path) {
+        /* In-memory models currently do not participate in .mgk loading. */
+        return;
+    }
+
+    if (model->mgk_model_handle == NULL) {
+        printf("nna_model_refresh_io_from_mgk: loading .mgk model for IO introspection: %s\n",
+               model->model_path);
+        model->mgk_model_handle = load_mgk_model(model->model_path);
+        if (model->mgk_model_handle == NULL) {
+            fprintf(stderr, "nna_model_refresh_io_from_mgk: load_mgk_model failed\n");
+            return;
+        }
+    }
+
+    void *handle = model->mgk_model_handle;
+
+    /* Count inputs by querying indices until a failure occurs. */
+    unsigned int idx = 0;
+    unsigned int count_in = 0;
+    while (1) {
+        void *data = NULL;
+        int dims[4];
+        int ndim = 0;
+        int dtype_code = 0;
+        int format_code = 0;
+        int rc = mgk_model_get_io_tensor_info(handle,
+                                              1, /* is_input */
+                                              idx,
+                                              &data,
+                                              dims,
+                                              &ndim,
+                                              &dtype_code,
+                                              &format_code);
+        if (rc != 0) {
+            break;
+        }
+        count_in++;
+        idx++;
+    }
+
+    if (count_in > 0) {
+        model->num_inputs = count_in;
+    }
+
+    /* Count outputs similarly. */
+    idx = 0;
+    unsigned int count_out = 0;
+    while (1) {
+        void *data = NULL;
+        int dims[4];
+        int ndim = 0;
+        int dtype_code = 0;
+        int format_code = 0;
+        int rc = mgk_model_get_io_tensor_info(handle,
+                                              0, /* is_input */
+                                              idx,
+                                              &data,
+                                              dims,
+                                              &ndim,
+                                              &dtype_code,
+                                              &format_code);
+        if (rc != 0) {
+            break;
+        }
+        count_out++;
+        idx++;
+    }
+
+    if (count_out > 0) {
+        model->num_outputs = count_out;
+    }
+}
+
 /* Load model from file */
 nna_model_t* nna_model_load(const char *path, const nna_model_options_t *options) {
     int fd = -1;
     nna_model_t *model = NULL;
     struct stat st;
-    
+
     /* Open model file */
     fd = open(path, O_RDONLY);
     if (fd < 0) {
-        fprintf(stderr, "nna_model_load: Failed to open %s: %s\n", 
+        fprintf(stderr, "nna_model_load: Failed to open %s: %s\n",
                 path, strerror(errno));
         return NULL;
     }
-    
+
     /* Get file size */
     if (fstat(fd, &st) < 0) {
         fprintf(stderr, "nna_model_load: fstat failed: %s\n", strerror(errno));
         close(fd);
         return NULL;
     }
-    
+
     /* Allocate model structure */
     model = calloc(1, sizeof(nna_model_t));
     if (model == NULL) {
@@ -119,7 +203,7 @@ nna_model_t* nna_model_load(const char *path, const nna_model_options_t *options
     }
 
     model->model_size = st.st_size;
-    
+
     /* Map or load model data */
     if (options && options->use_file_mapping) {
         /* Use mmap for large models */
@@ -141,9 +225,9 @@ nna_model_t* nna_model_load(const char *path, const nna_model_options_t *options
             close(fd);
             return NULL;
         }
-        
+
         if (read(fd, model->model_data, model->model_size) != (ssize_t)model->model_size) {
-            fprintf(stderr, "nna_model_load: Failed to read model: %s\n", 
+            fprintf(stderr, "nna_model_load: Failed to read model: %s\n",
                     strerror(errno));
             free(model->model_data);
             free(model);
@@ -152,33 +236,36 @@ nna_model_t* nna_model_load(const char *path, const nna_model_options_t *options
         }
         model->is_mapped = 0;
     }
-    
+
     close(fd);
-    
+
     /* Parse ELF header */
     model->elf_header = (Elf32_Ehdr*)model->model_data;
-    
+
     /* Verify ELF magic */
     if (memcmp(model->elf_header->e_ident, ELFMAG, SELFMAG) != 0) {
         fprintf(stderr, "nna_model_load: Not a valid ELF file\n");
         nna_model_unload(model);
         return NULL;
     }
-    
+
     /* Get section headers */
-    model->section_headers = (Elf32_Shdr*)((char*)model->model_data + 
+    model->section_headers = (Elf32_Shdr*)((char*)model->model_data +
                                            model->elf_header->e_shoff);
-    
+
     /* Get section name string table */
     Elf32_Shdr *shstrtab = &model->section_headers[model->elf_header->e_shstrndx];
     model->section_names = (char*)model->model_data + shstrtab->sh_offset;
-    
+
     printf("Model loaded: %s (%zu bytes)\n", path, model->model_size);
     printf("  ELF sections: %u\n", model->elf_header->e_shnum);
 
-    /* TODO: Parse model structure, extract inputs/outputs */
-    model->num_inputs = 1;   /* Placeholder */
-    model->num_outputs = 1;  /* Placeholder */
+    /* Default placeholders; may be refined using the C++ Magik model. */
+    model->num_inputs = 1;
+    model->num_outputs = 1;
+
+    /* If possible, refine num_inputs/num_outputs from the .mgk tensors. */
+    nna_model_refresh_io_from_mgk(model);
 
     return model;
 }
@@ -211,6 +298,7 @@ nna_model_t* nna_model_load_from_memory(const void *buffer, size_t size,
 
     model->num_inputs = 1;
     model->num_outputs = 1;
+    model->forward_mem_size = 0;
 
     return model;
 }
@@ -221,11 +309,24 @@ int nna_model_get_info(nna_model_t *model, nna_model_info_t *info) {
         return NNA_ERROR_INVALID;
     }
 
+    /* Ensure our view of inputs/outputs reflects the underlying .mgk model
+     * when possible. This may load the .mgk model the first time. */
+    nna_model_refresh_io_from_mgk(model);
+
     info->num_inputs = model->num_inputs;
     info->num_outputs = model->num_outputs;
     info->num_layers = 0;  /* TODO: Parse from model */
     info->model_size = model->model_size;
-    info->forward_mem_req = 1024 * 1024;  /* TODO: Calculate actual requirement */
+
+    size_t fwd = 0;
+    if (model->mgk_model_handle != NULL) {
+        fwd = mgk_model_get_forward_memory_size(model->mgk_model_handle);
+    }
+    if (fwd == 0) {
+        fwd = 1024 * 1024;  /* Fallback conservative default (1 MiB). */
+    }
+    model->forward_mem_size = fwd;
+    info->forward_mem_req = fwd;
 
     return NNA_SUCCESS;
 }
