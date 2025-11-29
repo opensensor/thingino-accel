@@ -6,6 +6,7 @@
 //! - Data type strings (UINT8, FP32, etc.)
 //! - Quantized weights and parameters
 //! - Layer names and operation paths
+//! - Quantization scales (FP32 values)
 
 use crate::types::{MgkFile, Section};
 use anyhow::Result;
@@ -27,6 +28,10 @@ pub struct LayerInfo {
     pub layer_type: String,
     pub layer_id: Option<u32>,
     pub offset: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_fused: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fused_ops: Option<Vec<String>>,
 }
 
 /// Operation path info (e.g., "Gru/gru_ubit8/2/0/0/")
@@ -38,14 +43,32 @@ pub struct OpPathInfo {
     pub offset: usize,
 }
 
-/// Model metadata extracted from rodata
+/// Quantization scale group (consecutive scales for a layer)
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScaleGroup {
+    pub start_offset: usize,
+    pub scales: Vec<f32>,
+    pub layer_hint: Option<String>,
+}
+
+/// Model metadata extracted from rodata
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ModelMetadata {
     pub tensors: Vec<TensorInfo>,
     pub layers: Vec<LayerInfo>,
     pub op_paths: Vec<OpPathInfo>,
     pub inputs: Vec<String>,
     pub outputs: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub input_names: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub output_names: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub scale_groups: Vec<ScaleGroup>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub tensor_formats: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub data_types: Vec<String>,
 }
 
 /// Known data formats in MGK files
@@ -63,11 +86,30 @@ const LAYER_TYPE_PREFIXES: &[(&str, &str)] = &[
     ("QuantizeGRU", "GRU"),
     ("QuantizeBatchNorm", "BatchNorm"),
     ("QuantizeFeature", "Feature"),
+    ("QuantizeConv2DWrapper", "Conv2D_Fused"),
     ("QuantizeConv", "Conv"),
     ("QuantizeRelu", "Relu"),
     ("QuantizeAdd", "Add"),
     ("QuantizePool", "Pool"),
     ("QuantizeConcat", "Concat"),
+    ("QuantizeConcatInference", "Concat"),
+    ("QuantizeUpsample", "Upsample"),
+    ("QuantizeSlice", "Slice"),
+    ("QuantizeReshape", "Reshape"),
+    ("QuantizePermute", "Permute"),
+    ("QuantizeSigmoid", "Sigmoid"),
+    ("QuantizeMul", "Mul"),
+    ("QuantizeSoftmax", "Softmax"),
+    ("QuantizeWeight", "Weight"),
+];
+
+/// Fusion indicators in layer names
+const FUSION_INDICATORS: &[&str] = &[
+    "QuantizeConv2DWrapper",
+    "conv2d_tnpu",
+    "QuantizeWeight",
+    "fuse_",
+    "_fused",
 ];
 
 /// Extract tensor information from the rodata section
@@ -180,7 +222,11 @@ pub fn get_rodata_section(mgk: &MgkFile) -> Option<&Section> {
     mgk.sections.iter().find(|s| s.name == ".rodata")
 }
 
-/// Extract layer information from rodata
+/// Extract layer information from rodata using multiple patterns
+/// Pattern 1 (AEC style): layer_N_Type (e.g., layer_37_QuantizeGRU)
+/// Pattern 2 (YOLO style): NNN_Quantize (e.g., 414_Quantize)
+/// Pattern 3 (PTQ fused): ptq_model_<op>_N_Quantize
+/// Pattern 4 (Output): NNN_output_last_layer
 pub fn extract_layer_info(mgk: &MgkFile) -> Result<Vec<LayerInfo>> {
     let rodata = mgk.sections.iter()
         .find(|s| s.name == ".rodata")
@@ -191,13 +237,57 @@ pub fn extract_layer_info(mgk: &MgkFile) -> Result<Vec<LayerInfo>> {
 
     let mut i = 0;
     while i < data.len() {
-        // Look for "layer_" prefix
+        // Pattern 1: layer_N_Type (AEC style)
         if data[i..].starts_with(b"layer_") {
             if let Some(end) = data[i..].iter().position(|&b| b == 0) {
                 let name = String::from_utf8_lossy(&data[i..i + end]).to_string();
-
-                // Parse layer ID from name (e.g., "layer_80_QuantizeBatchNorm")
                 let layer_id = parse_layer_id(&name);
+                let layer_type = parse_layer_type(&name);
+                let (is_fused, fused_ops) = detect_fusion(&name);
+
+                layers.push(LayerInfo {
+                    name: name.clone(),
+                    layer_type,
+                    layer_id,
+                    offset: i,
+                    is_fused: if is_fused { Some(true) } else { None },
+                    fused_ops: if fused_ops.is_empty() { None } else { Some(fused_ops) },
+                });
+
+                i += end + 1;
+                continue;
+            }
+        }
+
+        // Pattern 2: NNN_Quantize (YOLO style) - starts with 3+ digits
+        if i + 3 < data.len() && data[i].is_ascii_digit() && data[i + 1].is_ascii_digit() && data[i + 2].is_ascii_digit() {
+            if let Some(end) = data[i..].iter().position(|&b| b == 0) {
+                let name = String::from_utf8_lossy(&data[i..i + end]).to_string();
+                if name.contains("Quantize") || name.contains("output_last_layer") {
+                    let layer_id = parse_yolo_layer_id(&name);
+                    let layer_type = parse_layer_type(&name);
+                    let (is_fused, fused_ops) = detect_fusion(&name);
+
+                    layers.push(LayerInfo {
+                        name: name.clone(),
+                        layer_type,
+                        layer_id,
+                        offset: i,
+                        is_fused: if is_fused { Some(true) } else { None },
+                        fused_ops: if fused_ops.is_empty() { None } else { Some(fused_ops) },
+                    });
+
+                    i += end + 1;
+                    continue;
+                }
+            }
+        }
+
+        // Pattern 3: ptq_model_<op>_N_Quantize (PTQ fused)
+        if data[i..].starts_with(b"ptq_model_") {
+            if let Some(end) = data[i..].iter().position(|&b| b == 0) {
+                let name = String::from_utf8_lossy(&data[i..i + end]).to_string();
+                let layer_id = parse_ptq_layer_id(&name);
                 let layer_type = parse_layer_type(&name);
 
                 layers.push(LayerInfo {
@@ -205,14 +295,42 @@ pub fn extract_layer_info(mgk: &MgkFile) -> Result<Vec<LayerInfo>> {
                     layer_type,
                     layer_id,
                     offset: i,
+                    is_fused: Some(true),
+                    fused_ops: Some(vec!["Conv".to_string(), "BN".to_string(), "ReLU".to_string()]),
                 });
 
                 i += end + 1;
                 continue;
             }
         }
+
+        // Pattern 4: onnx__QuantizeXXX_NNN (ONNX intermediate tensors)
+        if data[i..].starts_with(b"onnx__Quantize") {
+            if let Some(end) = data[i..].iter().position(|&b| b == 0) {
+                let name = String::from_utf8_lossy(&data[i..i + end]).to_string();
+                let layer_id = parse_onnx_layer_id(&name);
+                let layer_type = parse_layer_type(&name);
+                let (is_fused, fused_ops) = detect_fusion(&name);
+
+                layers.push(LayerInfo {
+                    name: name.clone(),
+                    layer_type,
+                    layer_id,
+                    offset: i,
+                    is_fused: if is_fused { Some(true) } else { None },
+                    fused_ops: if fused_ops.is_empty() { None } else { Some(fused_ops) },
+                });
+
+                i += end + 1;
+                continue;
+            }
+        }
+
         i += 1;
     }
+
+    // Sort by layer_id
+    layers.sort_by_key(|l| l.layer_id.unwrap_or(u32::MAX));
 
     Ok(layers)
 }
@@ -225,6 +343,66 @@ fn parse_layer_id(name: &str) -> Option<u32> {
     } else {
         None
     }
+}
+
+/// Parse layer ID from YOLO-style name (e.g., "414_Quantize..." -> 414)
+fn parse_yolo_layer_id(name: &str) -> Option<u32> {
+    let parts: Vec<&str> = name.split('_').collect();
+    if !parts.is_empty() {
+        parts[0].parse().ok()
+    } else {
+        None
+    }
+}
+
+/// Parse layer ID from PTQ-style name (e.g., "ptq_model_conv_5_Quantize" -> 5)
+fn parse_ptq_layer_id(name: &str) -> Option<u32> {
+    // Find the number before _Quantize
+    let parts: Vec<&str> = name.split('_').collect();
+    for (i, part) in parts.iter().enumerate() {
+        if *part == "Quantize" && i > 0 {
+            return parts[i - 1].parse().ok();
+        }
+    }
+    None
+}
+
+/// Parse layer ID from ONNX-style name (e.g., "onnx__QuantizeConv_500" -> 500)
+fn parse_onnx_layer_id(name: &str) -> Option<u32> {
+    let parts: Vec<&str> = name.split('_').collect();
+    if let Some(last) = parts.last() {
+        last.parse().ok()
+    } else {
+        None
+    }
+}
+
+/// Detect if a layer is fused (Conv+BN+ReLU)
+fn detect_fusion(name: &str) -> (bool, Vec<String>) {
+    let mut is_fused = false;
+    let mut fused_ops = Vec::new();
+
+    for indicator in FUSION_INDICATORS {
+        if name.contains(indicator) {
+            is_fused = true;
+            break;
+        }
+    }
+
+    if is_fused {
+        // Detect which ops are fused
+        if name.contains("Conv") || name.contains("conv") {
+            fused_ops.push("Conv".to_string());
+        }
+        if name.contains("BatchNorm") || name.contains("bn") || name.contains("BN") {
+            fused_ops.push("BN".to_string());
+        }
+        if name.contains("Relu") || name.contains("relu") || name.contains("ReLU") {
+            fused_ops.push("ReLU".to_string());
+        }
+    }
+
+    (is_fused, fused_ops)
 }
 
 /// Parse layer type from layer name
@@ -244,6 +422,38 @@ fn parse_layer_type(name: &str) -> String {
     }
     if name.contains("Feature") {
         return "Feature".to_string();
+    }
+    if name.contains("Conv") || name.contains("conv") {
+        return "Conv".to_string();
+    }
+    if name.contains("Pool") || name.contains("pool") {
+        return "Pool".to_string();
+    }
+    if name.contains("Add") && !name.contains("Addr") {
+        return "Add".to_string();
+    }
+    if name.contains("Concat") || name.contains("concat") {
+        return "Concat".to_string();
+    }
+    if name.contains("Upsample") || name.contains("upsample") {
+        return "Upsample".to_string();
+    }
+    if name.contains("Reshape") || name.contains("reshape") {
+        return "Reshape".to_string();
+    }
+    if name.contains("Sigmoid") || name.contains("sigmoid") {
+        return "Sigmoid".to_string();
+    }
+    if name.contains("Relu") || name.contains("relu") || name.contains("ReLU") {
+        return "ReLU".to_string();
+    }
+    if name.contains("output_last_layer") {
+        return "Output".to_string();
+    }
+
+    // For YOLO-style NNN_Quantize names, mark as QuantizedLayer
+    if name.ends_with("_Quantize") {
+        return "QuantizedLayer".to_string();
     }
 
     "Unknown".to_string()
@@ -305,6 +515,9 @@ pub fn extract_model_metadata(mgk: &MgkFile) -> Result<ModelMetadata> {
     let tensors = extract_tensor_info(mgk)?;
     let layers = extract_layer_info(mgk)?;
     let op_paths = extract_op_paths(mgk)?;
+    let scale_groups = extract_scales(mgk).unwrap_or_default();
+    let tensor_formats = extract_tensor_formats(mgk);
+    let data_types = extract_data_types(mgk);
 
     // Identify inputs and outputs
     let mut inputs = Vec::new();
@@ -319,12 +532,28 @@ pub fn extract_model_metadata(mgk: &MgkFile) -> Result<ModelMetadata> {
         }
     }
 
+    // Also check layers for outputs
+    for layer in &layers {
+        if layer.name.contains("output_last_layer") && !outputs.contains(&layer.name) {
+            outputs.push(layer.name.clone());
+        }
+    }
+
+    // Set input_names and output_names as copies for ONNX export
+    let input_names = inputs.clone();
+    let output_names = outputs.clone();
+
     Ok(ModelMetadata {
         tensors,
         layers,
         op_paths,
         inputs,
         outputs,
+        input_names,
+        output_names,
+        scale_groups,
+        tensor_formats,
+        data_types,
     })
 }
 
@@ -361,6 +590,127 @@ pub fn find_quantization_params(data: &[u8], start: usize, count: usize) -> Vec<
     }
 
     params
+}
+
+/// Extract quantization scales from rodata
+/// Scales are FP32 values typically in range 0.001 to 10.0
+pub fn extract_scales(mgk: &MgkFile) -> Result<Vec<ScaleGroup>> {
+    let rodata = mgk.sections.iter()
+        .find(|s| s.name == ".rodata")
+        .ok_or_else(|| anyhow::anyhow!("No .rodata section found"))?;
+
+    let data = &rodata.data;
+    let mut scales: Vec<(usize, f32)> = Vec::new();
+
+    // Scan for FP32 values that look like quantization scales
+    let mut offset = 0;
+    while offset + 4 <= data.len() {
+        let bytes: [u8; 4] = [data[offset], data[offset + 1], data[offset + 2], data[offset + 3]];
+        let val = f32::from_le_bytes(bytes);
+
+        // Quantization scales are typically in range 0.001 to 10.0
+        if val.is_finite() && val.abs() > 0.001 && val.abs() < 10.0 {
+            // Additional check: avoid values that look like addresses or integers
+            let as_int = i32::from_le_bytes(bytes);
+            if as_int.abs() > 1000 {
+                // Likely a valid scale
+                scales.push((offset, val));
+            }
+        }
+        offset += 4;
+    }
+
+    // Group consecutive scales (offset difference <= 16 bytes)
+    let mut groups = Vec::new();
+    let mut current_group: Vec<(usize, f32)> = Vec::new();
+
+    for (off, val) in scales {
+        if current_group.is_empty() {
+            current_group.push((off, val));
+        } else {
+            let last_off = current_group.last().unwrap().0;
+            if off - last_off <= 16 {
+                current_group.push((off, val));
+            } else {
+                // Start new group
+                if current_group.len() >= 2 {
+                    groups.push(ScaleGroup {
+                        start_offset: current_group[0].0,
+                        scales: current_group.iter().map(|(_, v)| *v).collect(),
+                        layer_hint: None,
+                    });
+                }
+                current_group = vec![(off, val)];
+            }
+        }
+    }
+
+    // Don't forget the last group
+    if current_group.len() >= 2 {
+        groups.push(ScaleGroup {
+            start_offset: current_group[0].0,
+            scales: current_group.iter().map(|(_, v)| *v).collect(),
+            layer_hint: None,
+        });
+    }
+
+    Ok(groups)
+}
+
+/// Extract unique tensor formats found in rodata
+pub fn extract_tensor_formats(mgk: &MgkFile) -> Vec<String> {
+    let rodata = match mgk.sections.iter().find(|s| s.name == ".rodata") {
+        Some(s) => s,
+        None => return Vec::new(),
+    };
+
+    let data = &rodata.data;
+    let mut formats = Vec::new();
+
+    for fmt in DATA_FORMATS {
+        let pattern = fmt.as_bytes();
+        for i in 0..data.len().saturating_sub(pattern.len()) {
+            if data[i..].starts_with(pattern) {
+                let end = i + pattern.len();
+                if end < data.len() && (data[end] == 0 || !data[end].is_ascii_alphabetic()) {
+                    if !formats.contains(&fmt.to_string()) {
+                        formats.push(fmt.to_string());
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    formats
+}
+
+/// Extract unique data types found in rodata
+pub fn extract_data_types(mgk: &MgkFile) -> Vec<String> {
+    let rodata = match mgk.sections.iter().find(|s| s.name == ".rodata") {
+        Some(s) => s,
+        None => return Vec::new(),
+    };
+
+    let data = &rodata.data;
+    let mut types = Vec::new();
+
+    for dt in DATA_TYPES {
+        let pattern = dt.as_bytes();
+        for i in 0..data.len().saturating_sub(pattern.len()) {
+            if data[i..].starts_with(pattern) {
+                let end = i + pattern.len();
+                if end < data.len() && (data[end] == 0 || !data[end].is_ascii_alphabetic()) {
+                    if !types.contains(&dt.to_string()) {
+                        types.push(dt.to_string());
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    types
 }
 
 /// Layer graph node representing a layer and its connections

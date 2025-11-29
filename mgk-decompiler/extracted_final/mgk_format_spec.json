@@ -1,0 +1,89 @@
+{
+  "file_format": {
+    "type": "ELF32 MIPS Little-Endian Shared Library",
+    "architecture": "MIPS32 (for NNA accelerator)",
+    "sections": {
+      ".text": {
+        "description": "Compiled kernel code for NNA operations",
+        "content": "Layer-specific quantized inference kernels (conv, gru, etc.)"
+      },
+      ".rodata": {
+        "description": "Read-only data including layer names, scales, and tensor info",
+        "content": [
+          "Layer names (e.g., 'layer_2_QuantizeFeature')",
+          "Quantization scales (FP32 values)",
+          "Tensor shape information",
+          "Operator configurations"
+        ]
+      },
+      ".data.rel.ro": {
+        "description": "Relocatable read-only data with weight pointers",
+        "content": "Pointers to weight data regions"
+      },
+      "weight_region": {
+        "description": "Appended INT8 quantized weight data",
+        "location": "After the last ELF section"
+      }
+    }
+  },
+  "tensor_formats": {
+    "NDHWC32": {
+      "description": "Feature tensor layout for NNA",
+      "dims": "[N_BATCH, D_C32, HEIGHT, WIDTH, CHN_32]",
+      "notes": "Features grouped in 32-channel chunks"
+    },
+    "NMHWSOIB2": {
+      "description": "Weight tensor layout for NNA",
+      "dims": "[N_OFP, M_IFP, KERNEL_H, KERNEL_W, S_BIT2, OFP, IFP]",
+      "notes": "Packed format for accelerator, includes 2-bit sub-grouping"
+    },
+    "NMC32": {
+      "description": "BatchNorm/bias tensor layout",
+      "dims": "[N_OFP, M_BT, CHN_32]"
+    }
+  },
+  "data_types": {
+    "INT8": {
+      "id": 12,
+      "description": "8-bit signed integer weights"
+    },
+    "UINT8": {
+      "id": 11,
+      "description": "8-bit unsigned activations"
+    },
+    "FP32": {
+      "id": 0,
+      "description": "32-bit float for scales"
+    }
+  },
+  "quantization": {
+    "method": "FQAT (Fully Quantized Aware Training)",
+    "weight_format": "INT8 symmetric",
+    "activation_format": "UINT8/INT8",
+    "scale_format": "FP32 per-channel or per-tensor",
+    "notes": [
+      "Scales stored in .rodata section",
+      "Multiple scale groups per layer (input_scale, weight_scale)",
+      "First 5 layers have 4 scales each, rest have 2"
+    ]
+  },
+  "aec_model_specific": {
+    "input_shape": "[1, 1, 256, 8]",
+    "output_shape": "[1, 1, 256, 8]",
+    "channel_count": 32,
+    "layer_count": 24,
+    "gru_layers": {
+      "layer_37": {
+        "type": "Unidirectional GRU",
+        "hidden_size": 32,
+        "weight_size": 4096
+      },
+      "layer_46": {
+        "type": "Bidirectional GRU",
+        "hidden_size": 32,
+        "weight_size": 12864
+      }
+    },
+    "total_weights": 153644
+  }
+}

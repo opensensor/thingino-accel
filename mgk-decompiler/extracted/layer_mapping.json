@@ -1,0 +1,330 @@
+{
+  "layers": [
+    {
+      "name": "layer_80_QuantizeBatchNorm",
+      "type": "BatchNorm",
+      "shape": [
+        1,
+        1,
+        256,
+        8
+      ],
+      "expected_size": 128
+    },
+    {
+      "name": "layer_78_QuantizeFeature",
+      "type": "Feature",
+      "shape": [
+        1,
+        1,
+        1,
+        128,
+        32
+      ],
+      "expected_size": 2048
+    },
+    {
+      "name": "layer_73_QuantizeFeature",
+      "type": "Feature",
+      "shape": [
+        1,
+        1,
+        1,
+        64,
+        32
+      ],
+      "expected_size": 2048
+    },
+    {
+      "name": "layer_68_QuantizeFeature",
+      "type": "Feature",
+      "shape": [
+        1,
+        1,
+        1,
+        64,
+        32
+      ],
+      "expected_size": 1024
+    },
+    {
+      "name": "layer_63_QuantizeFeature",
+      "type": "Feature",
+      "shape": [
+        1,
+        1,
+        1,
+        64,
+        32
+      ],
+      "expected_size": 1024
+    },
+    {
+      "name": "layer_58_QuantizeFeature",
+      "type": "Feature",
+      "shape": [
+        1,
+        1,
+        1,
+        64,
+        32
+      ],
+      "expected_size": 1024
+    },
+    {
+      "name": "layer_46_QuantizeGRU",
+      "type": "GRU",
+      "shape": [
+        1,
+        64,
+        2,
+        32
+      ],
+      "expected_size": 12288
+    },
+    {
+      "name": "layer_44_QuantizeFeature",
+      "type": "Feature",
+      "shape": [
+        1,
+        1,
+        1,
+        64,
+        32
+      ],
+      "expected_size": 1024
+    },
+    {
+      "name": "layer_43_QuantizeBatchNorm",
+      "type": "BatchNorm",
+      "shape": [
+        1,
+        1,
+        1,
+        64,
+        32
+      ],
+      "expected_size": 1024
+    },
+    {
+      "name": "layer_41_QuantizeFeature",
+      "type": "Feature",
+      "shape": [
+        1,
+        1,
+        1,
+        64,
+        32
+      ],
+      "expected_size": 1024
+    },
+    {
+      "name": "layer_37_QuantizeGRU",
+      "type": "GRU",
+      "shape": [
+        64,
+        1,
+        1,
+        32
+      ],
+      "expected_size": 6144
+    },
+    {
+      "name": "layer_37_QuantizeGRU:1",
+      "type": "GRU",
+      "shape": [
+        64,
+        1,
+        1,
+        32
+      ],
+      "expected_size": 6144
+    },
+    {
+      "name": "layer_35_QuantizeFeature",
+      "type": "Feature",
+      "shape": [
+        64,
+        1,
+        1,
+        1,
+        32
+      ],
+      "expected_size": 1024
+    },
+    {
+      "name": "layer_34_QuantizeBatchNorm",
+      "type": "BatchNorm",
+      "shape": [
+        1,
+        1,
+        1,
+        64,
+        32
+      ],
+      "expected_size": 1024
+    },
+    {
+      "name": "layer_32_QuantizeFeature",
+      "type": "Feature",
+      "shape": [
+        1,
+        1,
+        1,
+        64,
+        32
+      ],
+      "expected_size": 1024
+    },
+    {
+      "name": "layer_28_QuantizeFeature",
+      "type": "Feature",
+      "shape": [
+        1,
+        4,
+        1,
+        64,
+        32
+      ],
+      "expected_size": 1024
+    },
+    {
+      "name": "layer_26_QuantizeFeature",
+      "type": "Feature",
+      "shape": [
+        1,
+        1,
+        1,
+        64,
+        32
+      ],
+      "expected_size": 1024
+    },
+    {
+      "name": "layer_22_QuantizeFeature",
+      "type": "Feature",
+      "shape": [
+        1,
+        4,
+        1,
+        64,
+        32
+      ],
+      "expected_size": 1024
+    },
+    {
+      "name": "layer_20_QuantizeFeature",
+      "type": "Feature",
+      "shape": [
+        1,
+        1,
+        1,
+        64,
+        32
+      ],
+      "expected_size": 1024
+    },
+    {
+      "name": "layer_16_QuantizeFeature",
+      "type": "Feature",
+      "shape": [
+        1,
+        4,
+        1,
+        64,
+        32
+      ],
+      "expected_size": 1024
+    },
+    {
+      "name": "layer_14_QuantizeFeature",
+      "type": "Feature",
+      "shape": [
+        1,
+        1,
+        1,
+        64,
+        32
+      ],
+      "expected_size": 1024
+    },
+    {
+      "name": "layer_10_QuantizeFeature",
+      "type": "Feature",
+      "shape": [
+        1,
+        4,
+        1,
+        64,
+        32
+      ],
+      "expected_size": 1024
+    },
+    {
+      "name": "layer_8_QuantizeFeature",
+      "type": "Feature",
+      "shape": [
+        1,
+        1,
+        1,
+        128,
+        32
+      ],
+      "expected_size": 1024
+    },
+    {
+      "name": "layer_4_QuantizeFeature",
+      "type": "Feature",
+      "shape": [
+        1,
+        4,
+        1,
+        128,
+        32
+      ],
+      "expected_size": 2048
+    },
+    {
+      "name": "layer_2_QuantizeFeature",
+      "type": "Feature",
+      "shape": [
+        1,
+        1,
+        1,
+        256,
+        32
+      ],
+      "expected_size": 256
+    }
+  ],
+  "dense_regions": [
+    {
+      "start": 0,
+      "end": 80896,
+      "size": 80896
+    },
+    {
+      "start": 90880,
+      "end": 91136,
+      "size": 256
+    },
+    {
+      "start": 93440,
+      "end": 131328,
+      "size": 37888
+    },
+    {
+      "start": 137216,
+      "end": 137472,
+      "size": 256
+    },
+    {
+      "start": 145664,
+      "end": 150272,
+      "size": 4608
+    }
+  ],
+  "weight_offset": 496276,
+  "weight_size": 153644,
+  "total_expected": 48512
+}

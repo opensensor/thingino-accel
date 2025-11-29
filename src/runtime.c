@@ -63,18 +63,6 @@ extern void* nna_device_get_nndma_io(void);
 extern void* nna_device_get_nndma_desram(void);
 extern void* nna_device_get_ddr(void);
 extern uint32_t nna_device_get_ddr_pbase(void);
-/* Local DDR backing store for .mgk models.
- *
- * The OEM stack uses a DDR heap managed by libdrivers / soc-nna. For now we
- * decouple the logical DDR pointer that .mgk models see (__ddr_vbase) from the
- * physical DMA region used by the NNA driver.
- *
- * We back __ddr_vbase with a plain user-space allocation so that the model's
- * parameter parsing and CPU-side tensor ops cannot fault on device mappings
- * while we bring up the rest of the stack.
- */
-static void *runtime_ddr_base = NULL;
-static size_t runtime_ddr_size = 0;
 
 
 /* Initialize runtime environment */
@@ -92,28 +80,17 @@ int nna_runtime_init(void) {
 
     /* Set DDR base addresses.
      *
-     * For now we back __ddr_vbase with a plain user-space allocation instead of
-     * mapping the kernel's DDR DMA region directly into user space. This avoids
-     * SIGBUS faults from CPU-side accesses to device memory while we are still
-     * bringing up the NNA stack. The NNA driver continues to use its own DMA
-     * buffers via nna_malloc / nna_free.
+     * At this point the NNA driver has allocated a DDR DMA region (DDR heap)
+     * for us and mapped it into user space. We now expose that mapping to
+     * .mgk models via __ddr_vbase so that any CPU-side access to the logical
+     * DDR heap sees the same bytes that the hardware will use.
      */
     __ddr_pbase = (void*)(uintptr_t)nna_device_get_ddr_pbase();
-
-    if (!runtime_ddr_base) {
-        /* 8MB is plenty for model parameters and small workspaces for now. */
-        const size_t requested = 8 * 1024 * 1024;
-        void *buf = NULL;
-        int ret = posix_memalign(&buf, 64, requested);
-        if (ret != 0 || !buf) {
-            fprintf(stderr, "nna_runtime_init: failed to allocate runtime DDR buffer (%zu bytes)\n", requested);
-            return -1;
-        }
-        memset(buf, 0, requested);
-        runtime_ddr_base = buf;
-        runtime_ddr_size = requested;
+    __ddr_vbase = nna_device_get_ddr();
+    if (!__ddr_vbase) {
+        fprintf(stderr, "nna_runtime_init: nna_device_get_ddr() returned NULL (DDR mapping not ready)\n");
+        return -1;
     }
-    __ddr_vbase = runtime_ddr_base;
 
     /* Set NNA DMA base addresses */
     __nndma_io_vbase = nna_device_get_nndma_io();

@@ -1,0 +1,449 @@
+{
+  "weight_offset": 496276,
+  "weight_size": 153644,
+  "dense_regions": [
+    {
+      "start": 0,
+      "end": 12288,
+      "size": 12288
+    },
+    {
+      "start": 17408,
+      "end": 72704,
+      "size": 55296
+    },
+    {
+      "start": 93184,
+      "end": 131072,
+      "size": 37888
+    }
+  ],
+  "layers": [
+    {
+      "name": "layer_80_QuantizeBatchNorm",
+      "input_shape": [
+        1,
+        1,
+        256,
+        8
+      ],
+      "output_shape": [
+        1,
+        1,
+        256,
+        8
+      ],
+      "desc": "256*4=1024 (gamma,beta,mean,var)"
+    },
+    {
+      "name": "layer_2_QuantizeFeature",
+      "input_shape": [
+        1,
+        1,
+        1,
+        256,
+        32
+      ],
+      "output_shape": [
+        1,
+        1,
+        1,
+        256,
+        32
+      ],
+      "desc": "expand 8->32: 8*32=256 or conv"
+    },
+    {
+      "name": "layer_4_QuantizeFeature",
+      "input_shape": [
+        1,
+        4,
+        1,
+        128,
+        32
+      ],
+      "output_shape": [
+        1,
+        4,
+        1,
+        128,
+        32
+      ],
+      "desc": "downsample 256->128"
+    },
+    {
+      "name": "layer_8_QuantizeFeature",
+      "input_shape": [
+        1,
+        4,
+        1,
+        128,
+        32
+      ],
+      "output_shape": [
+        1,
+        4,
+        1,
+        128,
+        32
+      ],
+      "desc": "conv at 128"
+    },
+    {
+      "name": "layer_10_QuantizeFeature",
+      "input_shape": [
+        1,
+        4,
+        1,
+        64,
+        32
+      ],
+      "output_shape": [
+        1,
+        4,
+        1,
+        64,
+        32
+      ],
+      "desc": "downsample 128->64"
+    },
+    {
+      "name": "layer_14_QuantizeFeature",
+      "input_shape": [
+        1,
+        4,
+        1,
+        64,
+        32
+      ],
+      "output_shape": [
+        1,
+        4,
+        1,
+        64,
+        32
+      ],
+      "desc": "conv at 64"
+    },
+    {
+      "name": "layer_16_QuantizeFeature",
+      "input_shape": [
+        1,
+        4,
+        1,
+        64,
+        32
+      ],
+      "output_shape": [
+        1,
+        4,
+        1,
+        64,
+        32
+      ],
+      "desc": "conv at 64"
+    },
+    {
+      "name": "layer_20_QuantizeFeature",
+      "input_shape": [
+        1,
+        4,
+        1,
+        64,
+        32
+      ],
+      "output_shape": [
+        1,
+        4,
+        1,
+        64,
+        32
+      ],
+      "desc": "conv at 64"
+    },
+    {
+      "name": "layer_22_QuantizeFeature",
+      "input_shape": [
+        1,
+        4,
+        1,
+        64,
+        32
+      ],
+      "output_shape": [
+        1,
+        4,
+        1,
+        64,
+        32
+      ],
+      "desc": "conv at 64"
+    },
+    {
+      "name": "layer_26_QuantizeFeature",
+      "input_shape": [
+        1,
+        1,
+        1,
+        64,
+        32
+      ],
+      "output_shape": [
+        1,
+        1,
+        1,
+        64,
+        32
+      ],
+      "desc": "conv at 64"
+    },
+    {
+      "name": "layer_28_QuantizeFeature",
+      "input_shape": [
+        1,
+        1,
+        1,
+        64,
+        32
+      ],
+      "output_shape": [
+        1,
+        1,
+        1,
+        64,
+        32
+      ],
+      "desc": "conv at 64"
+    },
+    {
+      "name": "layer_32_QuantizeFeature",
+      "input_shape": [
+        1,
+        1,
+        1,
+        64,
+        32
+      ],
+      "output_shape": [
+        1,
+        1,
+        1,
+        64,
+        32
+      ],
+      "desc": "conv at 64"
+    },
+    {
+      "name": "layer_34_QuantizeBatchNorm",
+      "input_shape": [
+        1,
+        1,
+        1,
+        64,
+        32
+      ],
+      "output_shape": [
+        1,
+        1,
+        1,
+        64,
+        32
+      ],
+      "desc": "BN before GRU"
+    },
+    {
+      "name": "layer_35_QuantizeFeature",
+      "input_shape": [
+        1,
+        1,
+        1,
+        64,
+        32
+      ],
+      "output_shape": [
+        1,
+        1,
+        1,
+        64,
+        32
+      ],
+      "desc": "pre-GRU"
+    },
+    {
+      "name": "layer_37_QuantizeGRU",
+      "input_shape": [
+        64,
+        1,
+        1,
+        32
+      ],
+      "output_shape": [
+        64,
+        1,
+        1,
+        32
+      ],
+      "desc": "GRU hidden=32"
+    },
+    {
+      "name": "layer_41_QuantizeFeature",
+      "input_shape": [
+        1,
+        1,
+        1,
+        64,
+        32
+      ],
+      "output_shape": [
+        1,
+        1,
+        1,
+        64,
+        32
+      ],
+      "desc": "post-GRU"
+    },
+    {
+      "name": "layer_43_QuantizeBatchNorm",
+      "input_shape": [
+        1,
+        1,
+        1,
+        64,
+        32
+      ],
+      "output_shape": [
+        1,
+        1,
+        1,
+        64,
+        32
+      ],
+      "desc": "BN after GRU1"
+    },
+    {
+      "name": "layer_44_QuantizeFeature",
+      "input_shape": [
+        1,
+        1,
+        1,
+        64,
+        32
+      ],
+      "output_shape": [
+        1,
+        1,
+        1,
+        64,
+        32
+      ],
+      "desc": "between GRUs"
+    },
+    {
+      "name": "layer_46_QuantizeGRU",
+      "input_shape": [
+        1,
+        64,
+        2,
+        32
+      ],
+      "output_shape": [
+        1,
+        64,
+        2,
+        32
+      ],
+      "desc": "GRU2 bidirectional"
+    },
+    {
+      "name": "layer_58_QuantizeFeature",
+      "input_shape": [
+        1,
+        1,
+        1,
+        64,
+        32
+      ],
+      "output_shape": [
+        1,
+        1,
+        1,
+        64,
+        32
+      ],
+      "desc": "decoder"
+    },
+    {
+      "name": "layer_63_QuantizeFeature",
+      "input_shape": [
+        1,
+        1,
+        1,
+        64,
+        32
+      ],
+      "output_shape": [
+        1,
+        1,
+        1,
+        64,
+        32
+      ],
+      "desc": "decoder"
+    },
+    {
+      "name": "layer_68_QuantizeFeature",
+      "input_shape": [
+        1,
+        1,
+        1,
+        64,
+        32
+      ],
+      "output_shape": [
+        1,
+        1,
+        1,
+        64,
+        32
+      ],
+      "desc": "decoder"
+    },
+    {
+      "name": "layer_73_QuantizeFeature",
+      "input_shape": [
+        1,
+        1,
+        1,
+        64,
+        32
+      ],
+      "output_shape": [
+        1,
+        1,
+        1,
+        64,
+        32
+      ],
+      "desc": "upsample to 128"
+    },
+    {
+      "name": "layer_78_QuantizeFeature",
+      "input_shape": [
+        1,
+        1,
+        1,
+        128,
+        32
+      ],
+      "output_shape": [
+        1,
+        1,
+        1,
+        128,
+        32
+      ],
+      "desc": "upsample to 256"
+    }
+  ]
+}

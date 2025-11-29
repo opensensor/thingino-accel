@@ -1,0 +1,223 @@
+{
+  "source_file": "mgk-decompiler/AEC_T41_16K_NS_OUT_UC.mgk",
+  "weight_base_offset": 496276,
+  "layers": {
+    "layer_46_gru_bidir": {
+      "offset": 0,
+      "size": 12864,
+      "dtype": "int8",
+      "std": 75.79618835449219,
+      "zeros_pct": 2.153296019900498
+    },
+    "layer_63_feature": {
+      "offset": 13568,
+      "size": 448,
+      "dtype": "int8",
+      "std": 57.644683837890625,
+      "zeros_pct": 32.36607142857143
+    },
+    "layer_68_feature": {
+      "offset": 14592,
+      "size": 448,
+      "dtype": "int8",
+      "std": 57.14476776123047,
+      "zeros_pct": 32.142857142857146
+    },
+    "layer_35_feature": {
+      "offset": 15616,
+      "size": 704,
+      "dtype": "int8",
+      "std": 52.53670883178711,
+      "zeros_pct": 48.57954545454545
+    },
+    "layer_73_feature": {
+      "offset": 16640,
+      "size": 448,
+      "dtype": "int8",
+      "std": 56.29296875,
+      "zeros_pct": 32.8125
+    },
+    "layer_44_feature": {
+      "offset": 73472,
+      "size": 576,
+      "dtype": "int8",
+      "std": 49.263526916503906,
+      "zeros_pct": 50.173611111111114
+    },
+    "layer_58_feature": {
+      "offset": 74496,
+      "size": 576,
+      "dtype": "int8",
+      "std": 49.03935623168945,
+      "zeros_pct": 50.0
+    },
+    "layer_78_feature": {
+      "offset": 75520,
+      "size": 320,
+      "dtype": "int8",
+      "std": 48.42094039916992,
+      "zeros_pct": 15.0
+    },
+    "layer_4_feature": {
+      "offset": 76288,
+      "size": 3648,
+      "dtype": "int8",
+      "std": 43.18109893798828,
+      "zeros_pct": 67.16008771929825
+    },
+    "layer_16_feature": {
+      "offset": 80640,
+      "size": 2112,
+      "dtype": "int8",
+      "std": 42.06965255737305,
+      "zeros_pct": 68.37121212121212
+    },
+    "layer_2_feature": {
+      "offset": 84736,
+      "size": 320,
+      "dtype": "int8",
+      "std": 41.03646469116211,
+      "zeros_pct": 15.625
+    },
+    "layer_20_feature": {
+      "offset": 135552,
+      "size": 832,
+      "dtype": "int8",
+      "std": 43.92070770263672,
+      "zeros_pct": 52.88461538461539
+    },
+    "layer_26_feature": {
+      "offset": 136640,
+      "size": 832,
+      "dtype": "int8",
+      "std": 44.88315963745117,
+      "zeros_pct": 50.96153846153846
+    },
+    "layer_28_feature": {
+      "offset": 137792,
+      "size": 1408,
+      "dtype": "int8",
+      "std": 44.73715591430664,
+      "zeros_pct": 47.44318181818182
+    },
+    "layer_37_gru": {
+      "offset": 139456,
+      "size": 4096,
+      "dtype": "int8",
+      "std": 44.7644157409668,
+      "zeros_pct": 46.7529296875
+    },
+    "layer_10_feature": {
+      "offset": 143808,
+      "size": 2496,
+      "dtype": "int8",
+      "std": 46.414546966552734,
+      "zeros_pct": 44.99198717948718
+    },
+    "layer_32_feature": {
+      "offset": 146624,
+      "size": 768,
+      "dtype": "int8",
+      "std": 47.20107650756836,
+      "zeros_pct": 42.44791666666667
+    },
+    "layer_41_feature": {
+      "offset": 147712,
+      "size": 704,
+      "dtype": "int8",
+      "std": 47.02287673950195,
+      "zeros_pct": 40.05681818181818
+    },
+    "layer_8_feature": {
+      "offset": 148736,
+      "size": 1024,
+      "dtype": "int8",
+      "std": 46.149288177490234,
+      "zeros_pct": 45.41015625
+    },
+    "layer_14_feature": {
+      "offset": 150016,
+      "size": 1024,
+      "dtype": "int8",
+      "std": 45.81520462036133,
+      "zeros_pct": 46.09375
+    },
+    "layer_22_feature": {
+      "offset": 151872,
+      "size": 1772,
+      "dtype": "int8",
+      "std": 45.52989959716797,
+      "zeros_pct": 47.00902934537246
+    }
+  },
+  "quantization_scales": [
+    {
+      "offset": 447504,
+      "values": [
+        0.023556670174002647,
+        0.023556670174002647,
+        0.10354071110486984,
+        0.10354071110486984
+      ]
+    },
+    {
+      "offset": 448808,
+      "values": [
+        0.02370227314531803,
+        0.02370227314531803,
+        0.044595859944820404,
+        0.044595859944820404
+      ]
+    },
+    {
+      "offset": 450044,
+      "values": [
+        0.026028096675872803,
+        0.026028096675872803,
+        0.04052571952342987,
+        0.04052571952342987
+      ]
+    },
+    {
+      "offset": 451280,
+      "values": [
+        0.03627581521868706,
+        0.03627581521868706,
+        0.027327680960297585,
+        0.027327680960297585
+      ]
+    },
+    {
+      "offset": 452516,
+      "values": [
+        0.054869070649147034,
+        0.054869070649147034,
+        0.02243286930024624,
+        0.02243286930024624
+      ]
+    }
+  ],
+  "model_info": {
+    "type": "AEC",
+    "sample_rate": 16000,
+    "frame_size": 256,
+    "input_shape": [
+      1,
+      1,
+      256,
+      8
+    ],
+    "output_shape": [
+      1,
+      1,
+      256,
+      2
+    ],
+    "hidden_shape": [
+      64,
+      1,
+      1,
+      32
+    ]
+  }
+}

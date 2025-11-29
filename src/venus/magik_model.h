@@ -10,6 +10,8 @@
 #include <vector>
 #include <string>
 #include <map>
+#include <functional>
+#include <memory>
 
 namespace magik {
 namespace venus {
@@ -17,6 +19,10 @@ namespace venus {
 /* Forward declarations */
 class TensorXWrapper;
 class MagikLayerBase;
+
+/* Kernel function type used by MagikKernelLayer */
+using KernelFunc = std::function<ReturnValue(
+    std::unique_ptr<kernel::KernelParam>&, OpConfig*)>;
 
 /* Tensor info - layout must match OEM TensorInfo (size 0x70) */
 struct TensorInfo {
@@ -121,44 +127,106 @@ public:
     virtual std::vector<TensorXWrapper*> get_output_wrappers() const;
     virtual std::string get_name() const;
     virtual int get_layer_id() const;
+    virtual int forward();
+    virtual int update_cache_buffer_ptr(void *ptr);
+
+protected:
+    std::vector<TensorXWrapper*> inputs_;
+    std::vector<TensorXWrapper*> outputs_;
+    int layer_id_ = 0;
+    std::string name_;
 };
 
-/* MagikModelBase */
-class MagikModelBase {
+/* MagikKernelLayer - concrete layer that holds a kernel function */
+class MagikKernelLayer : public MagikLayerBase {
 public:
-    /* Module mode - nested enum */
-    enum class ModuleMode {
-        NORMAL = 0,
-        DEBUG = 1,
-    };
+    using KernelFunc = std::function<ReturnValue(
+        std::unique_ptr<kernel::KernelParam>&, OpConfig*)>;
 
-    /* Pyramid configuration - nested class
-     * Size: 0x50 (80 bytes) based on OEM libmert.so
-     * Layout:
-     * - Offset 0x00-0x0b: basic fields (level, width, height)
-     * - Offset 0x0c: std::vector<TensorXWrapper*> tensors_
-     * - Offset 0x18-0x1f: reserved/padding
-     * - Offset 0x20: std::map for input tensors
-     * - Offset 0x38: std::map for output tensors
-     */
-    struct PyramidConfig {
-        int level;
-        int width;
-        int height;
-        std::vector<TensorXWrapper*> tensors_;  // At offset 0x0c
+    MagikKernelLayer(int op_hint,
+                     KernelFunc kernel_fn,
+                     std::unique_ptr<kernel::KernelParam>& param,
+                     OpConfig* op_cfg);
 
-        /* Padding/reserved so that maps line up with OEM offsets */
-        char reserved_[0x08];
+    MagikKernelLayer(int op_hint,
+                     KernelFunc kernel_fn,
+                     std::unique_ptr<kernel::KernelParam>& param,
+                     OpConfig* op_cfg,
+                     std::vector<TensorXWrapper*> inputs,
+                     std::vector<TensorXWrapper*> outputs);
 
-        /* Name -> tensor wrapper maps (offsets 0x20 and 0x38) */
-        std::map<std::string, TensorXWrapper*> input_tensors_;
-        std::map<std::string, TensorXWrapper*> output_tensors_;
+    virtual ~MagikKernelLayer();
 
-        TensorXWrapper* get_tensor_wrapper(std::string &name) const;
-    };
+    virtual void set_inputs(std::vector<TensorXWrapper*> inputs) override;
+    virtual void set_outputs(std::vector<TensorXWrapper*> outputs) override;
+    virtual std::vector<TensorXWrapper*> get_inputs() const override;
+    virtual std::vector<TensorXWrapper*> get_outputs() const override;
+    virtual std::vector<TensorXWrapper*> get_input_wrappers() const override;
+    virtual std::vector<TensorXWrapper*> get_output_wrappers() const override;
+    virtual std::string get_name() const override;
+    virtual int get_layer_id() const override;
+    virtual int forward() override;
+    virtual int update_cache_buffer_ptr(void *ptr) override;
 
-    static_assert(sizeof(PyramidConfig) == 0x50,
-                  "PyramidConfig size must match OEM (0x50 bytes)");
+    kernel::KernelParam* get_kernel_param();
+
+private:
+    int op_hint_;
+    KernelFunc kernel_fn_;
+    std::unique_ptr<kernel::KernelParam> param_;
+    OpConfig* op_cfg_;
+    std::vector<TensorXWrapper*> inputs_;
+    std::vector<TensorXWrapper*> outputs_;
+    std::string name_;
+    static int next_layer_id_;
+    int layer_id_;
+};
+
+    /* MagikModelBase */
+    class MagikModelBase {
+    public:
+        /* Module mode - nested enum */
+        enum class ModuleMode {
+            NORMAL = 0,
+            DEBUG = 1,
+        };
+
+        /* Pyramid configuration - nested struct
+         *
+         * OEM layout recovered from libmert.so:
+         *   - magik::venus::MagikModelBase::create_and_add_pyramid_config()
+         *       calls operator new(0x50), memset(first 0x18 bytes to 0), then
+         *       default-constructs two std::_Rb_tree_header instances at
+         *       offsets 0x18 and 0x30.
+         *   - magik::venus::MagikModelBase::build_tensors(this, PyramidConfig*)
+         *       treats (config + 0x0c) as std::vector<TensorXWrapper*> and
+         *       pushes all created wrappers into it, and uses maps at
+         *       (config + 0x20) and (config + 0x38).
+         *   - magik::venus::MagikModelBase::PyramidConfig::get_tensor_wrapper()
+         *       linearly scans the std::vector<TensorXWrapper*> at offset 0x0c.
+         *
+         * Resulting layout (sizeof(PyramidConfig) == 0x50):
+         *   - 0x00: std::vector<MagikLayerBase*> layers_;
+         *   - 0x0c: std::vector<TensorXWrapper*> tensors_;
+         *   - 0x18: std::map<std::string, TensorXWrapper*> input_tensors_;
+         *   - 0x30: std::map<std::string, TensorXWrapper*> output_tensors_;
+         *   - 0x48: 8 bytes of reserved/padding.
+         */
+        struct PyramidConfig {
+            std::vector<MagikLayerBase*> layers_;      // 0x00 - populated by .mgk's build_layer()
+            std::vector<TensorXWrapper*> tensors_;     // 0x0c - populated by build_tensors()
+
+            /* Name -> tensor wrapper maps (used by OEM for IO lookup) */
+            std::map<std::string, TensorXWrapper*> input_tensors_;   // 0x18
+            std::map<std::string, TensorXWrapper*> output_tensors_;  // 0x30
+
+            /* Reserved padding to reach total size 0x50. Not used by OEM. */
+            char reserved_[0x08];                                      // 0x48
+
+            TensorXWrapper* get_tensor_wrapper(std::string &name) const;
+        };
+        static_assert(sizeof(PyramidConfig) == 0x50,
+                      "PyramidConfig size must match OEM (0x50 bytes)");
 
     MagikModelBase(long long param1, long long param2, void *&param3, void *param4,
                    ModelMemoryInfoManager::MemAllocMode mode, ModuleMode module_mode);
@@ -178,6 +246,18 @@ public:
     std::vector<PyramidConfig*> pyramid_configs_;  // At offset 0x34
     std::vector<MagikLayerBase*> layers_;
     PyramidConfig *main_pyramid_config_;
+
+    /* Pointer to layer I/O map. The .mgk might access this at a specific offset.
+     * We'll allocate the actual map and point to it. */
+    std::map<int, std::pair<std::vector<std::string>, std::vector<std::string>>>* layer_io_map_ptr_;
+
+    /* Store tensors separately, keyed by config pointer.
+     * This is immune to .mgk corruption of PyramidConfig internals. */
+    std::map<PyramidConfig*, std::vector<TensorXWrapper*>> config_tensors_;
+
+    /* Tensor lookup by name, keyed by config pointer. Used by get_tensor_wrapper. */
+    std::map<PyramidConfig*, std::map<std::string, TensorXWrapper*>> config_tensor_names_;
+
     virtual int run();
     virtual int reshape();
     virtual int pre_graph_run();

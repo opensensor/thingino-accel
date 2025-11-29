@@ -12,6 +12,34 @@ pub struct Section {
     pub data: Vec<u8>,
 }
 
+/// Quantization parameters for a layer
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct QuantizationParams {
+    pub weight_bitwidth: u8,
+    pub input_bitwidth: u8,
+    pub output_bitwidth: u8,
+    pub dequantize_scale: f32,
+    pub offset: f32,
+    pub threshold_min: f32,
+    pub threshold_max: f32,
+    pub fixpoint: bool,
+}
+
+impl QuantizationParams {
+    pub fn new() -> Self {
+        Self {
+            weight_bitwidth: 8,
+            input_bitwidth: 8,
+            output_bitwidth: 8,
+            dequantize_scale: 1.0,
+            offset: 0.0,
+            threshold_min: -128.0,
+            threshold_max: 127.0,
+            fixpoint: false,
+        }
+    }
+}
+
 /// Represents a symbol from the ELF file
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Symbol {
@@ -123,6 +151,14 @@ pub struct DetectedLayer {
     pub flags: u32,
     pub input_tensors: Vec<String>,
     pub output_tensors: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quant_params: Option<QuantizationParams>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub weight_offset: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub weight_size: Option<u64>,
+    #[serde(default)]
+    pub is_fused: bool,
 }
 
 /// Output format for JSON serialization
@@ -139,4 +175,8 @@ pub struct DecompilerOutput {
     pub weight_info: Option<crate::weight_extractor::WeightHeader>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub weight_stats: Option<crate::weight_extractor::WeightStats>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_config: Option<crate::layer_config::ModelConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub layer_weight_mappings: Option<Vec<crate::weight_extractor::LayerWeightMapping>>,
 }

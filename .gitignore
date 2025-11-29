@@ -1,1 +1,4 @@
 build/
+magik-toolkit/
+.idea/
+target/

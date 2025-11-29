@@ -1,0 +1,98 @@
+{
+  "layer_2_QuantizeFeature": {
+    "input_scale": 0.023556670174002647,
+    "weight_scale": 0.10354071110486984
+  },
+  "layer_4_QuantizeFeature": {
+    "input_scale": 0.02370227314531803,
+    "weight_scale": 0.044595859944820404
+  },
+  "layer_8_QuantizeFeature": {
+    "input_scale": 0.026028096675872803,
+    "weight_scale": 0.04052571952342987
+  },
+  "layer_10_QuantizeFeature": {
+    "input_scale": 0.03627581521868706,
+    "weight_scale": 0.027327680960297585
+  },
+  "layer_14_QuantizeFeature": {
+    "input_scale": 0.054869070649147034,
+    "weight_scale": 0.02243286930024624
+  },
+  "layer_16_QuantizeFeature": {
+    "scale_1": 0.007752098608762026,
+    "scale_2": 0.007752098608762026
+  },
+  "layer_20_QuantizeFeature": {
+    "scale_1": 0.007842488586902618,
+    "scale_2": 0.007842488586902618
+  },
+  "layer_22_QuantizeFeature": {
+    "scale_1": 0.23669970035552979,
+    "scale_2": 0.15648698806762695
+  },
+  "layer_26_QuantizeFeature": {
+    "scale_1": 0.23669970035552979,
+    "scale_2": 0.15648698806762695
+  },
+  "layer_28_QuantizeFeature": {
+    "scale_1": 0.014797080308198929,
+    "scale_2": 0.2387024313211441
+  },
+  "layer_32_QuantizeFeature": {
+    "scale_1": 0.014797080308198929,
+    "scale_2": 0.2387024313211441
+  },
+  "layer_34_QuantizeBatchNorm": {
+    "scale_1": 0.014797080308198929,
+    "scale_2": 0.2387024313211441
+  },
+  "layer_35_QuantizeFeature": {
+    "scale_1": 0.014797080308198929,
+    "scale_2": 0.2387024313211441
+  },
+  "layer_37_QuantizeGRU": {
+    "scale_1": 0.014797080308198929,
+    "scale_2": 0.2387024313211441
+  },
+  "layer_41_QuantizeFeature": {
+    "scale_1": 0.014797080308198929,
+    "scale_2": 0.2387024313211441
+  },
+  "layer_43_QuantizeBatchNorm": {
+    "scale_1": 0.014797080308198929,
+    "scale_2": 0.2387024313211441
+  },
+  "layer_44_QuantizeFeature": {
+    "scale_1": 0.014797080308198929,
+    "scale_2": 0.2387024313211441
+  },
+  "layer_46_QuantizeGRU": {
+    "scale_1": 0.014797080308198929,
+    "scale_2": 0.2387024313211441
+  },
+  "layer_58_QuantizeFeature": {
+    "scale_1": 0.014797080308198929,
+    "scale_2": 0.2387024313211441
+  },
+  "layer_63_QuantizeFeature": {
+    "scale_1": 0.014797080308198929,
+    "scale_2": 0.2387024313211441
+  },
+  "layer_68_QuantizeFeature": {
+    "scale_1": 0.014797080308198929,
+    "scale_2": 0.2387024313211441
+  },
+  "layer_73_QuantizeFeature": {
+    "scale_1": 0.014797080308198929,
+    "scale_2": 0.2387024313211441
+  },
+  "layer_78_QuantizeFeature": {
+    "scale_1": 0.23669970035552979,
+    "scale_2": 0.15648698806762695
+  },
+  "layer_80_QuantizeBatchNorm": {
+    "scale_1": 0.014797080308198929,
+    "scale_2": 0.2387024313211441
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "model_name": "AEC_T41_16K_NS_OUT_UC",
+  "model_type": "Acoustic Echo Cancellation",
+  "architecture": "U-Net with GRU",
+  "input_shape": [
+    1,
+    1,
+    256,
+    8
+  ],
+  "output_shape": [
+    1,
+    1,
+    256,
+    2
+  ],
+  "hidden_shape": [
+    64,
+    1,
+    1,
+    32
+  ],
+  "sample_rate": 16000,
+  "frame_size": 256,
+  "hop_size": 128,
+  "weight_info": {
+    "total_size": 153644,
+    "extracted_size": 134380,
+    "coverage_pct": 87.46192496940981
+  },
+  "layer_count": 23,
+  "scale_groups": 43,
+  "key_layers": {
+    "gru_bidirectional": {
+      "name": "layer_46",
+      "size": 12864,
+      "hidden_size": 32,
+      "input_size": 32
+    },
+    "gru_unidirectional": {
+      "name": "layer_37",
+      "size": 4096,
+      "hidden_size": 32
+    }
+  }
+}

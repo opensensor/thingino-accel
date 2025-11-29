@@ -1,0 +1,1404 @@
+╔══════════════════════════════════════════════════════════╗
+║  thingino-accel - Inference Test                         ║
+╚══════════════════════════════════════════════════════════╝
+
+[1] NNA initialization
+L2 cache: 128 KB, ORAM base: 0x12620000, ORAM size: 384 KB
+nmem available: 29 MB at 0x06300000
+NNA version: 0x00000041
+Runtime initialized:
+  oram_base = 0x12620000
+  __oram_vbase = 0x7726b000
+  __ddr_pbase = 0xc00000
+  __ddr_vbase = 0x76e6b000
+  __nndma_io_vbase = 0x77612000
+  __nndma_desram_vbase = 0x7760a000
+NNA initialized successfully
+  Device: /dev/soc-nna
+  ORAM: 0x12620000 (384 KB)
+  DDR:  0x00c00000 (4 MB)
+  NNDMA IO: 0x77612000
+  NNDMA DESRAM: 0x7760a000
+  ✓ NNA initialized
+[2] Load model
+      Model: /opt/AEC_T41_16K_NS_OUT_UC.mgk
+Model loaded: /opt/AEC_T41_16K_NS_OUT_UC.mgk (649920 bytes)
+  ELF sections: 28
+nna_model_refresh_io_from_mgk: loading .mgk model for IO introspection: /opt/AEC_T41_16K_NS_OUT_UC.mgk
+load_mgk_model: Loading /opt/AEC_T41_16K_NS_OUT_UC.mgk with dlopen...
+load_mgk_model: dlopen returned 0x77619830
+load_mgk_model: dlopen succeeded
+load_mgk_model: Looking for 'create' function...
+Found 'create' function at 0x76d6f0c0
+Calling create(param1=0, param2=0, oram=0x7726b000, ddr=0x76e6b000, extra=0, mem_mode=0, module_mode=0)...
+About to call create_fn...
+[VENUS] MagikModelBase::MagikModelBase(p1=0, p2=0, p3=0, p4=0x7726b000)
+[VENUS] MagikModelBase: layer_io_map_ptr_ = 0x77549538
+[VENUS] MagikModelBase::MagikModelBase() - constructor body complete
+[VENUS] MagikModelBase::set_oram_address(addr=0x7726b000, size=0)
+[VENUS] set_oram_address: ORAM address already set by runtime init
+[VENUS] MagikModelBase::create_and_add_pyramid_config() this=0x77619950
+[VENUS] PyramidConfig layout:
+[VENUS]   sizeof(PyramidConfig) = 80
+[VENUS]   &layers_ offset = 0
+[VENUS]   &tensors_ offset = 12
+[VENUS]   &input_tensors_ offset = 24
+[VENUS]   &output_tensors_ offset = 48
+[VENUS] Created new PyramidConfig at 0x77549e00
+[VENUS] About to add config to pyramid_configs_ and set main_pyramid_config_
+[VENUS] Added to pyramid_configs_ vector (size now = 1)
+[VENUS] Set main_pyramid_config_ = 0x77549e00
+[VENUS] create_and_add_pyramid_config() returning 0x77549e00
+[VENUS] MagikModelBase::build_tensors(config=0x77549e00, infos.size=75)
+[VENUS] build_tensors: === TensorInfo metadata dump ===
+[VENUS] TensorInfo[0]: name='onnx__QuantizeConcatInference_500' is_input=1 is_output=0
+        dtype_str='UINT8' layout='NHWC' channel=1
+        shape=[1,1,128,32]
+[VENUS] TensorInfo[1]: name='__FormatConvert__26' is_input=0 is_output=0
+        dtype_str='UINT8' layout='NDHWC32' channel=1
+        shape=[1,1,1,128,32]
+[VENUS] TensorInfo[2]: name='onnx__QuantizeConcatInference_481' is_input=1 is_output=0
+        dtype_str='UINT8' layout='NHWC' channel=1
+        shape=[1,1,64,32]
+[VENUS] TensorInfo[3]: name='__FormatConvert__25' is_input=0 is_output=0
+        dtype_str='UINT8' layout='NDHWC32' channel=1
+        shape=[1,1,1,64,32]
+[VENUS] TensorInfo[4]: name='onnx__QuantizeConcatInference_464' is_input=1 is_output=0
+        dtype_str='UINT8' layout='NHWC' channel=1
+        shape=[1,1,64,32]
+[VENUS] TensorInfo[5]: name='__FormatConvert__24' is_input=0 is_output=0
+        dtype_str='UINT8' layout='NDHWC32' channel=1
+        shape=[1,1,1,64,32]
+[VENUS] TensorInfo[6]: name='onnx__QuantizeConcatInference_447' is_input=1 is_output=0
+        dtype_str='UINT8' layout='NHWC' channel=1
+        shape=[1,1,64,32]
+[VENUS] TensorInfo[7]: name='__FormatConvert__23' is_input=0 is_output=0
+        dtype_str='UINT8' layout='NDHWC32' channel=1
+        shape=[1,1,1,64,32]
+[VENUS] TensorInfo[8]: name='onnx__QuantizeConcatInference_430' is_input=1 is_output=0
+        dtype_str='UINT8' layout='NHWC' channel=1
+        shape=[1,1,64,32]
+[VENUS] TensorInfo[9]: name='__FormatConvert__22' is_input=0 is_output=0
+        dtype_str='UINT8' layout='NDHWC32' channel=1
+        shape=[1,1,1,64,32]
+[VENUS] TensorInfo[10]: name='onnx__QuantizeConcatInference_325' is_input=1 is_output=0
+        dtype_str='UINT8' layout='NHWC' channel=1
+        shape=[1,1,64,32]
+[VENUS] TensorInfo[11]: name='__FormatConvert__21' is_input=0 is_output=0
+        dtype_str='UINT8' layout='NDHWC32' channel=1
+        shape=[1,1,1,64,32]
+[VENUS] TensorInfo[12]: name='onnx__QuantizeConcatInference_313' is_input=1 is_output=0
+        dtype_str='UINT8' layout='NHWC' channel=1
+        shape=[1,1,64,32]
+[VENUS] TensorInfo[13]: name='__FormatConvert__20' is_input=0 is_output=0
+        dtype_str='UINT8' layout='NDHWC32' channel=1
+        shape=[1,1,1,64,32]
+[VENUS] TensorInfo[14]: name='onnx__QuantizeConcatInference_301' is_input=1 is_output=0
+        dtype_str='UINT8' layout='NHWC' channel=1
+        shape=[1,1,64,32]
+[VENUS] TensorInfo[15]: name='__FormatConvert__19' is_input=0 is_output=0
+        dtype_str='UINT8' layout='NDHWC32' channel=1
+        shape=[1,1,1,64,32]
+[VENUS] TensorInfo[16]: name='onnx__QuantizeConcatInference_289' is_input=1 is_output=0
+        dtype_str='UINT8' layout='NHWC' channel=1
+        shape=[1,1,64,32]
+[VENUS] TensorInfo[17]: name='__FormatConvert__18' is_input=0 is_output=0
+        dtype_str='UINT8' layout='NDHWC32' channel=1
+        shape=[1,1,1,64,32]
+[VENUS] TensorInfo[18]: name='onnx__QuantizeConcatInference_277' is_input=1 is_output=0
+        dtype_str='UINT8' layout='NHWC' channel=1
+        shape=[1,1,128,32]
+[VENUS] TensorInfo[19]: name='__FormatConvert__17' is_input=0 is_output=0
+        dtype_str='UINT8' layout='NDHWC32' channel=1
+        shape=[1,1,1,128,32]
+[VENUS] TensorInfo[20]: name='input' is_input=1 is_output=0
+        dtype_str='FP32' layout='NHWC' channel=1
+        shape=[1,1,256,8]
+[VENUS] TensorInfo[21]: name='layer_80_QuantizeBatchNorm' is_input=0 is_output=0
+        dtype_str='UINT8' layout='NHWC' channel=1
+        shape=[1,1,256,8]
+[VENUS] TensorInfo[22]: name='__FormatConvert__15' is_input=0 is_output=0
+        dtype_str='UINT8' layout='NDHWC32' channel=1
+        shape=[1,1,1,256,32]
+[VENUS] TensorInfo[23]: name='layer_78_QuantizeFeature' is_input=0 is_output=0
+        dtype_str='UINT8' layout='NDHWC32' channel=1
+        shape=[1,1,1,128,32]
+[VENUS] TensorInfo[24]: name='layer_73_QuantizeFeature' is_input=0 is_output=0
+        dtype_str='UINT8' layout='NDHWC32' channel=1
+        shape=[1,1,1,64,32]
+[VENUS] TensorInfo[25]: name='layer_68_QuantizeFeature' is_input=0 is_output=0
+        dtype_str='UINT8' layout='NDHWC32' channel=1
+        shape=[1,1,1,64,32]
+[VENUS] TensorInfo[26]: name='layer_63_QuantizeFeature' is_input=0 is_output=0
+        dtype_str='UINT8' layout='NDHWC32' channel=1
+        shape=[1,1,1,64,32]
+[VENUS] TensorInfo[27]: name='layer_58_QuantizeFeature' is_input=0 is_output=0
+        dtype_str='UINT8' layout='NDHWC32' channel=1
+        shape=[1,1,1,64,32]
+[VENUS] TensorInfo[28]: name='__FormatConvert__10' is_input=0 is_output=1
+        dtype_str='UINT8' layout='NHWC' channel=1
+        shape=[1,1,64,32]
+[VENUS] TensorInfo[29]: name='input.3' is_input=0 is_output=0
+        dtype_str='UINT8' layout='NHWC' channel=1
+        shape=[1,1,64,32]
+[VENUS] TensorInfo[30]: name='layer_46_QuantizeGRU' is_input=0 is_output=0
+        dtype_str='UINT8' layout='NHWC' channel=1
+        shape=[1,64,2,32]
+[VENUS] TensorInfo[31]: name='__Reshape__0' is_input=0 is_output=0
+        dtype_str='UINT8' layout='NHWC' channel=1
+        shape=[1,64,64]
+[VENUS] TensorInfo[32]: name='__FormatConvert__1' is_input=0 is_output=0
+        dtype_str='UINT8' layout='NDHWC32' channel=1
+        shape=[1,2,1,64,32]
+[VENUS] TensorInfo[33]: name='layer_44_QuantizeFeature' is_input=0 is_output=0
+        dtype_str='UINT8' layout='NDHWC32' channel=1
+        shape=[1,1,1,64,32]
+[VENUS] TensorInfo[34]: name='__FormatConvert__9' is_input=0 is_output=0
+        dtype_str='UINT8' layout='NHWC' channel=1
+        shape=[1,1,64,32]
+[VENUS] TensorInfo[35]: name='onnx__Transpose_371' is_input=0 is_output=0
+        dtype_str='UINT8' layout='NHWC' channel=1
+        shape=[1,1,64,32]
+[VENUS] TensorInfo[36]: name='__FormatConvert__27' is_input=0 is_output=0
+        dtype_str='UINT8' layout='NDHWC32' channel=1
+        shape=[1,1,1,64,32]
+[VENUS] TensorInfo[37]: name='layer_43_QuantizeBatchNorm' is_input=0 is_output=0
+        dtype_str='UINT8' layout='NDHWC32' channel=1
+        shape=[1,1,1,64,32]
+[VENUS] TensorInfo[38]: name='layer_41_QuantizeFeature' is_input=0 is_output=0
+        dtype_str='UINT8' layout='NDHWC32' channel=1
+        shape=[1,1,1,64,32]
+[VENUS] TensorInfo[39]: name='__FormatConvert__8' is_input=0 is_output=0
+        dtype_str='UINT8' layout='NHWC' channel=1
+        shape=[1,1,64,32]
+[VENUS] TensorInfo[40]: name='input.15' is_input=0 is_output=0
+        dtype_str='UINT8' layout='NHWC' channel=1
+        shape=[64,1,1,32]
+[VENUS] TensorInfo[41]: name='312_last_layer' is_input=0 is_output=1
+        dtype_str='UINT8' layout='NHWC' channel=1
+        shape=[1,1,64,32]
+[VENUS] TensorInfo[42]: name='300_last_layer' is_input=0 is_output=1
+        dtype_str='UINT8' layout='NHWC' channel=1
+        shape=[1,1,64,32]
+[VENUS] TensorInfo[43]: name='288_last_layer' is_input=0 is_output=1
+        dtype_str='UINT8' layout='NHWC' channel=1
+        shape=[1,1,64,32]
+[VENUS] TensorInfo[44]: name='276_last_layer' is_input=0 is_output=1
+        dtype_str='UINT8' layout='NHWC' channel=1
+        shape=[1,1,128,32]
+[VENUS] TensorInfo[45]: name='hidden' is_input=1 is_output=0
+        dtype_str='UINT8' layout='NHWC' channel=1
+        shape=[64,1,1,32]
+[VENUS] TensorInfo[46]: name='layer_37_QuantizeGRU' is_input=0 is_output=0
+        dtype_str='UINT8' layout='NHWC' channel=1
+        shape=[64,1,1,32]
+[VENUS] TensorInfo[47]: name='layer_37_QuantizeGRU:1' is_input=0 is_output=1
+        dtype_str='UINT8' layout='NHWC' channel=1
+        shape=[64,1,1,32]
+[VENUS] TensorInfo[48]: name='__Reshape__1' is_input=0 is_output=0
+        dtype_str='UINT8' layout='NHWC' channel=1
+        shape=[64,1,32]
+[VENUS] TensorInfo[49]: name='__FormatConvert__2' is_input=0 is_output=0
+        dtype_str='UINT8' layout='NDHWC32' channel=1
+        shape=[64,1,1,1,32]
+[VENUS] TensorInfo[50]: name='layer_35_QuantizeFeature' is_input=0 is_output=0
+        dtype_str='UINT8' layout='NDHWC32' channel=1
+        shape=[64,1,1,1,32]
+[VENUS] TensorInfo[51]: name='__FormatConvert__7' is_input=0 is_output=0
+        dtype_str='UINT8' layout='NHWC' channel=1
+        shape=[64,1,1,32]
+[VENUS] TensorInfo[52]: name='onnx__Transpose_414' is_input=0 is_output=0
+        dtype_str='UINT8' layout='NHWC' channel=1
+        shape=[1,64,1,32]
+[VENUS] TensorInfo[53]: name='__ConvertTensor__18' is_input=0 is_output=0
+        dtype_str='UINT8' layout='NHWC' channel=1
+        shape=[1,1,64,32]
+[VENUS] TensorInfo[54]: name='__FormatConvert__0' is_input=0 is_output=0
+        dtype_str='UINT8' layout='NDHWC32' channel=1
+        shape=[1,1,1,64,32]
+[VENUS] TensorInfo[55]: name='layer_34_QuantizeBatchNorm' is_input=0 is_output=0
+        dtype_str='UINT8' layout='NDHWC32' channel=1
+        shape=[1,1,1,64,32]
+[VENUS] TensorInfo[56]: name='layer_32_QuantizeFeature' is_input=0 is_output=0
+        dtype_str='UINT8' layout='NDHWC32' channel=1
+        shape=[1,1,1,64,32]
+[VENUS] TensorInfo[57]: name='layer_28_QuantizeFeature' is_input=0 is_output=0
+        dtype_str='UINT8' layout='NDHWC32' channel=1
+        shape=[1,4,1,64,32]
+[VENUS] TensorInfo[58]: name='layer_26_QuantizeFeature' is_input=0 is_output=0
+        dtype_str='UINT8' layout='NDHWC32' channel=1
+        shape=[1,1,1,64,32]
+[VENUS] TensorInfo[59]: name='layer_22_QuantizeFeature' is_input=0 is_output=0
+        dtype_str='UINT8' layout='NDHWC32' channel=1
+        shape=[1,4,1,64,32]
+[VENUS] TensorInfo[60]: name='layer_20_QuantizeFeature' is_input=0 is_output=0
+        dtype_str='UINT8' layout='NDHWC32' channel=1
+        shape=[1,1,1,64,32]
+[VENUS] TensorInfo[61]: name='layer_16_QuantizeFeature' is_input=0 is_output=0
+        dtype_str='UINT8' layout='NDHWC32' channel=1
+        shape=[1,4,1,64,32]
+[VENUS] TensorInfo[62]: name='layer_14_QuantizeFeature' is_input=0 is_output=0
+        dtype_str='UINT8' layout='NDHWC32' channel=1
+        shape=[1,1,1,64,32]
+[VENUS] TensorInfo[63]: name='layer_10_QuantizeFeature' is_input=0 is_output=0
+        dtype_str='UINT8' layout='NDHWC32' channel=1
+        shape=[1,4,1,64,32]
+[VENUS] TensorInfo[64]: name='x.39' is_input=0 is_output=0
+        dtype_str='UINT8' layout='NDHWC32' channel=1
+        shape=[1,4,1,128,32]
+[VENUS] TensorInfo[65]: name='layer_8_QuantizeFeature' is_input=0 is_output=0
+        dtype_str='UINT8' layout='NDHWC32' channel=1
+        shape=[1,1,1,128,32]
+[VENUS] TensorInfo[66]: name='layer_4_QuantizeFeature' is_input=0 is_output=0
+        dtype_str='UINT8' layout='NDHWC32' channel=1
+        shape=[1,4,1,128,32]
+[VENUS] TensorInfo[67]: name='x.43' is_input=0 is_output=0
+        dtype_str='UINT8' layout='NDHWC32' channel=1
+        shape=[1,4,1,256,32]
+[VENUS] TensorInfo[68]: name='layer_2_QuantizeFeature' is_input=0 is_output=0
+        dtype_str='UINT8' layout='NDHWC32' channel=1
+        shape=[1,1,1,256,32]
+[VENUS] TensorInfo[69]: name='onnx__Sigmoid_521_last_layer' is_input=0 is_output=1
+        dtype_str='FP32' layout='NHWC' channel=1
+        shape=[1,1,256,2]
+[VENUS] TensorInfo[70]: name='499_last_layer' is_input=0 is_output=1
+        dtype_str='UINT8' layout='NHWC' channel=1
+        shape=[1,1,128,32]
+[VENUS] TensorInfo[71]: name='480_last_layer' is_input=0 is_output=1
+        dtype_str='UINT8' layout='NHWC' channel=1
+        shape=[1,1,64,32]
+[VENUS] TensorInfo[72]: name='463_last_layer' is_input=0 is_output=1
+        dtype_str='UINT8' layout='NHWC' channel=1
+        shape=[1,1,64,32]
+[VENUS] TensorInfo[73]: name='446_last_layer' is_input=0 is_output=1
+        dtype_str='UINT8' layout='NHWC' channel=1
+        shape=[1,1,64,32]
+[VENUS] TensorInfo[74]: name='429_last_layer' is_input=0 is_output=1
+        dtype_str='UINT8' layout='NHWC' channel=1
+        shape=[1,1,64,32]
+[VENUS] build_tensors: === End TensorInfo dump ===
+[VENUS] build_tensors: [0] name='onnx__QuantizeConcatInference_500' is_input=1 is_output=0
+[VENUS] build_tensors: calling create_tensor for 'onnx__QuantizeConcatInference_500'
+[VENUS] MagikModelBase::create_tensor(name=onnx__QuantizeConcatInference_500)
+[VENUS]   dtype_str="UINT8", layout="NHWC", is_input=1, is_output=0
+[VENUS]   shape dims=[1,1,128,32]
+[VENUS] TensorX::TensorX default ctor this=0x77549e70 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x77549e70, old_ndims=0, new_ndims=4)
+[VENUS] TensorX::set_shape: dims_begin=0x77549790 dims_end=0x775497a0 cap=0x775497a0 [1,1,128,32]
+[VENUS] core::oram_malloc(size=4096)
+[VENUS] core::oram_malloc returning 0x77609000
+[VENUS] Created tensor: 4096 bytes (aligned=4096), dtype=6, fmt=1, shape=[1,1,128,32]
+[VENUS] build_tensors: create_tensor returned 0x77549e70 for 'onnx__QuantizeConcatInference_500'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x77549e70, this=0x55a69600)
+[VENUS] build_tensors: marking 'onnx__QuantizeConcatInference_500' as model INPUT (index=0)
+[VENUS] build_tensors: [1] name='__FormatConvert__26' is_input=0 is_output=0
+[VENUS] build_tensors: calling create_tensor for '__FormatConvert__26'
+[VENUS] MagikModelBase::create_tensor(name=__FormatConvert__26)
+[VENUS]   dtype_str="UINT8", layout="NDHWC32", is_input=0, is_output=0
+[VENUS]   shape dims=[1,1,1,128,32]
+[VENUS] TensorX::TensorX default ctor this=0x77549ed0 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x77549ed0, old_ndims=0, new_ndims=5)
+[VENUS] TensorX::set_shape: dims_begin=0x77549810 dims_end=0x77549824 cap=0x77549824 [1,1,1,128,32]
+[VENUS] core::oram_malloc(size=4096)
+[VENUS] core::oram_malloc returning 0x77608000
+[VENUS] Created tensor: 4096 bytes (aligned=4096), dtype=6, fmt=1, shape=[1,1,1,128,32]
+[VENUS] build_tensors: create_tensor returned 0x77549ed0 for '__FormatConvert__26'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x77549ed0, this=0x55a69820)
+[VENUS] build_tensors: [2] name='onnx__QuantizeConcatInference_481' is_input=1 is_output=0
+[VENUS] build_tensors: calling create_tensor for 'onnx__QuantizeConcatInference_481'
+[VENUS] MagikModelBase::create_tensor(name=onnx__QuantizeConcatInference_481)
+[VENUS]   dtype_str="UINT8", layout="NHWC", is_input=1, is_output=0
+[VENUS]   shape dims=[1,1,64,32]
+[VENUS] TensorX::TensorX default ctor this=0x77549f30 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x77549f30, old_ndims=0, new_ndims=4)
+[VENUS] TensorX::set_shape: dims_begin=0x775498f0 dims_end=0x77549900 cap=0x77549900 [1,1,64,32]
+[VENUS] core::oram_malloc(size=2048)
+[VENUS] core::oram_malloc returning 0x77607000
+[VENUS] Created tensor: 2048 bytes (aligned=2048), dtype=6, fmt=1, shape=[1,1,64,32]
+[VENUS] build_tensors: create_tensor returned 0x77549f30 for 'onnx__QuantizeConcatInference_481'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x77549f30, this=0x77549a10)
+[VENUS] build_tensors: marking 'onnx__QuantizeConcatInference_481' as model INPUT (index=1)
+[VENUS] build_tensors: [3] name='__FormatConvert__25' is_input=0 is_output=0
+[VENUS] build_tensors: calling create_tensor for '__FormatConvert__25'
+[VENUS] MagikModelBase::create_tensor(name=__FormatConvert__25)
+[VENUS]   dtype_str="UINT8", layout="NDHWC32", is_input=0, is_output=0
+[VENUS]   shape dims=[1,1,1,64,32]
+[VENUS] TensorX::TensorX default ctor this=0x77549bb0 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x77549bb0, old_ndims=0, new_ndims=5)
+[VENUS] TensorX::set_shape: dims_begin=0x775497d0 dims_end=0x775497e4 cap=0x775497e4 [1,1,1,64,32]
+[VENUS] core::oram_malloc(size=2048)
+[VENUS] core::oram_malloc returning 0x77602000
+[VENUS] Created tensor: 2048 bytes (aligned=2048), dtype=6, fmt=1, shape=[1,1,1,64,32]
+[VENUS] build_tensors: create_tensor returned 0x77549bb0 for '__FormatConvert__25'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x77549bb0, this=0x76d3b040)
+[VENUS] build_tensors: [4] name='onnx__QuantizeConcatInference_464' is_input=1 is_output=0
+[VENUS] build_tensors: calling create_tensor for 'onnx__QuantizeConcatInference_464'
+[VENUS] MagikModelBase::create_tensor(name=onnx__QuantizeConcatInference_464)
+[VENUS]   dtype_str="UINT8", layout="NHWC", is_input=1, is_output=0
+[VENUS]   shape dims=[1,1,64,32]
+[VENUS] TensorX::TensorX default ctor this=0x77549c10 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x77549c10, old_ndims=0, new_ndims=4)
+[VENUS] TensorX::set_shape: dims_begin=0x76d3b460 dims_end=0x76d3b470 cap=0x76d3b470 [1,1,64,32]
+[VENUS] core::oram_malloc(size=2048)
+[VENUS] core::oram_malloc returning 0x76d3a000
+[VENUS] Created tensor: 2048 bytes (aligned=2048), dtype=6, fmt=1, shape=[1,1,64,32]
+[VENUS] build_tensors: create_tensor returned 0x77549c10 for 'onnx__QuantizeConcatInference_464'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x77549c10, this=0x76d3b160)
+[VENUS] build_tensors: marking 'onnx__QuantizeConcatInference_464' as model INPUT (index=2)
+[VENUS] build_tensors: [5] name='__FormatConvert__24' is_input=0 is_output=0
+[VENUS] build_tensors: calling create_tensor for '__FormatConvert__24'
+[VENUS] MagikModelBase::create_tensor(name=__FormatConvert__24)
+[VENUS]   dtype_str="UINT8", layout="NDHWC32", is_input=0, is_output=0
+[VENUS]   shape dims=[1,1,1,64,32]
+[VENUS] TensorX::TensorX default ctor this=0x77549c60 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x77549c60, old_ndims=0, new_ndims=5)
+[VENUS] TensorX::set_shape: dims_begin=0x76d3b500 dims_end=0x76d3b514 cap=0x76d3b514 [1,1,1,64,32]
+[VENUS] core::oram_malloc(size=2048)
+[VENUS] core::oram_malloc returning 0x76d39000
+[VENUS] Created tensor: 2048 bytes (aligned=2048), dtype=6, fmt=1, shape=[1,1,1,64,32]
+[VENUS] build_tensors: create_tensor returned 0x77549c60 for '__FormatConvert__24'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x77549c60, this=0x76d3b350)
+[VENUS] build_tensors: [6] name='onnx__QuantizeConcatInference_447' is_input=1 is_output=0
+[VENUS] build_tensors: calling create_tensor for 'onnx__QuantizeConcatInference_447'
+[VENUS] MagikModelBase::create_tensor(name=onnx__QuantizeConcatInference_447)
+[VENUS]   dtype_str="UINT8", layout="NHWC", is_input=1, is_output=0
+[VENUS]   shape dims=[1,1,64,32]
+[VENUS] TensorX::TensorX default ctor this=0x77549cc0 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x77549cc0, old_ndims=0, new_ndims=4)
+[VENUS] TensorX::set_shape: dims_begin=0x76d3b5e0 dims_end=0x76d3b5f0 cap=0x76d3b5f0 [1,1,64,32]
+[VENUS] core::oram_malloc(size=2048)
+[VENUS] core::oram_malloc returning 0x76d38000
+[VENUS] Created tensor: 2048 bytes (aligned=2048), dtype=6, fmt=1, shape=[1,1,64,32]
+[VENUS] build_tensors: create_tensor returned 0x77549cc0 for 'onnx__QuantizeConcatInference_447'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x77549cc0, this=0x76d3b880)
+[VENUS] build_tensors: marking 'onnx__QuantizeConcatInference_447' as model INPUT (index=3)
+[VENUS] build_tensors: [7] name='__FormatConvert__23' is_input=0 is_output=0
+[VENUS] build_tensors: calling create_tensor for '__FormatConvert__23'
+[VENUS] MagikModelBase::create_tensor(name=__FormatConvert__23)
+[VENUS]   dtype_str="UINT8", layout="NDHWC32", is_input=0, is_output=0
+[VENUS]   shape dims=[1,1,1,64,32]
+[VENUS] TensorX::TensorX default ctor this=0x77549d20 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x77549d20, old_ndims=0, new_ndims=5)
+[VENUS] TensorX::set_shape: dims_begin=0x76d3b660 dims_end=0x76d3b674 cap=0x76d3b674 [1,1,1,64,32]
+[VENUS] core::oram_malloc(size=2048)
+[VENUS] core::oram_malloc returning 0x76d37000
+[VENUS] Created tensor: 2048 bytes (aligned=2048), dtype=6, fmt=1, shape=[1,1,1,64,32]
+[VENUS] build_tensors: create_tensor returned 0x77549d20 for '__FormatConvert__23'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x77549d20, this=0x76d36030)
+[VENUS] build_tensors: [8] name='onnx__QuantizeConcatInference_430' is_input=1 is_output=0
+[VENUS] build_tensors: calling create_tensor for 'onnx__QuantizeConcatInference_430'
+[VENUS] MagikModelBase::create_tensor(name=onnx__QuantizeConcatInference_430)
+[VENUS]   dtype_str="UINT8", layout="NHWC", is_input=1, is_output=0
+[VENUS]   shape dims=[1,1,64,32]
+[VENUS] TensorX::TensorX default ctor this=0x76d3ba10 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76d3ba10, old_ndims=0, new_ndims=4)
+[VENUS] TensorX::set_shape: dims_begin=0x76d3b740 dims_end=0x76d3b750 cap=0x76d3b750 [1,1,64,32]
+[VENUS] core::oram_malloc(size=2048)
+[VENUS] core::oram_malloc returning 0x76d35000
+[VENUS] Created tensor: 2048 bytes (aligned=2048), dtype=6, fmt=1, shape=[1,1,64,32]
+[VENUS] build_tensors: create_tensor returned 0x76d3ba10 for 'onnx__QuantizeConcatInference_430'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76d3ba10, this=0x76d36150)
+[VENUS] build_tensors: marking 'onnx__QuantizeConcatInference_430' as model INPUT (index=4)
+[VENUS] build_tensors: [9] name='__FormatConvert__22' is_input=0 is_output=0
+[VENUS] build_tensors: calling create_tensor for '__FormatConvert__22'
+[VENUS] MagikModelBase::create_tensor(name=__FormatConvert__22)
+[VENUS]   dtype_str="UINT8", layout="NDHWC32", is_input=0, is_output=0
+[VENUS]   shape dims=[1,1,1,64,32]
+[VENUS] TensorX::TensorX default ctor this=0x76d3bb00 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76d3bb00, old_ndims=0, new_ndims=5)
+[VENUS] TensorX::set_shape: dims_begin=0x76d3b7c0 dims_end=0x76d3b7d4 cap=0x76d3b7d4 [1,1,1,64,32]
+[VENUS] core::oram_malloc(size=2048)
+[VENUS] core::oram_malloc returning 0x76d34000
+[VENUS] Created tensor: 2048 bytes (aligned=2048), dtype=6, fmt=1, shape=[1,1,1,64,32]
+[VENUS] build_tensors: create_tensor returned 0x76d3bb00 for '__FormatConvert__22'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76d3bb00, this=0x76d36330)
+[VENUS] build_tensors: [10] name='onnx__QuantizeConcatInference_325' is_input=1 is_output=0
+[VENUS] build_tensors: calling create_tensor for 'onnx__QuantizeConcatInference_325'
+[VENUS] MagikModelBase::create_tensor(name=onnx__QuantizeConcatInference_325)
+[VENUS]   dtype_str="UINT8", layout="NHWC", is_input=1, is_output=0
+[VENUS]   shape dims=[1,1,64,32]
+[VENUS] TensorX::TensorX default ctor this=0x76d3bb50 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76d3bb50, old_ndims=0, new_ndims=4)
+[VENUS] TensorX::set_shape: dims_begin=0x76d3b4e0 dims_end=0x76d3b4f0 cap=0x76d3b4f0 [1,1,64,32]
+[VENUS] core::oram_malloc(size=2048)
+[VENUS] core::oram_malloc returning 0x76d33000
+[VENUS] Created tensor: 2048 bytes (aligned=2048), dtype=6, fmt=1, shape=[1,1,64,32]
+[VENUS] build_tensors: create_tensor returned 0x76d3bb50 for 'onnx__QuantizeConcatInference_325'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76d3bb50, this=0x76d36120)
+[VENUS] build_tensors: marking 'onnx__QuantizeConcatInference_325' as model INPUT (index=5)
+[VENUS] build_tensors: [11] name='__FormatConvert__21' is_input=0 is_output=0
+[VENUS] build_tensors: calling create_tensor for '__FormatConvert__21'
+[VENUS] MagikModelBase::create_tensor(name=__FormatConvert__21)
+[VENUS]   dtype_str="UINT8", layout="NDHWC32", is_input=0, is_output=0
+[VENUS]   shape dims=[1,1,1,64,32]
+[VENUS] TensorX::TensorX default ctor this=0x76d3bba0 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76d3bba0, old_ndims=0, new_ndims=5)
+[VENUS] TensorX::set_shape: dims_begin=0x76d3b720 dims_end=0x76d3b734 cap=0x76d3b734 [1,1,1,64,32]
+[VENUS] core::oram_malloc(size=2048)
+[VENUS] core::oram_malloc returning 0x76d32000
+[VENUS] Created tensor: 2048 bytes (aligned=2048), dtype=6, fmt=1, shape=[1,1,1,64,32]
+[VENUS] build_tensors: create_tensor returned 0x76d3bba0 for '__FormatConvert__21'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76d3bba0, this=0x76d36570)
+[VENUS] build_tensors: [12] name='onnx__QuantizeConcatInference_313' is_input=1 is_output=0
+[VENUS] build_tensors: calling create_tensor for 'onnx__QuantizeConcatInference_313'
+[VENUS] MagikModelBase::create_tensor(name=onnx__QuantizeConcatInference_313)
+[VENUS]   dtype_str="UINT8", layout="NHWC", is_input=1, is_output=0
+[VENUS]   shape dims=[1,1,64,32]
+[VENUS] TensorX::TensorX default ctor this=0x76d3bc00 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76d3bc00, old_ndims=0, new_ndims=4)
+[VENUS] TensorX::set_shape: dims_begin=0x76d36840 dims_end=0x76d36850 cap=0x76d36850 [1,1,64,32]
+[VENUS] core::oram_malloc(size=2048)
+[VENUS] core::oram_malloc returning 0x76d31000
+[VENUS] Created tensor: 2048 bytes (aligned=2048), dtype=6, fmt=1, shape=[1,1,64,32]
+[VENUS] build_tensors: create_tensor returned 0x76d3bc00 for 'onnx__QuantizeConcatInference_313'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76d3bc00, this=0x76d36690)
+[VENUS] build_tensors: marking 'onnx__QuantizeConcatInference_313' as model INPUT (index=6)
+[VENUS] build_tensors: [13] name='__FormatConvert__20' is_input=0 is_output=0
+[VENUS] build_tensors: calling create_tensor for '__FormatConvert__20'
+[VENUS] MagikModelBase::create_tensor(name=__FormatConvert__20)
+[VENUS]   dtype_str="UINT8", layout="NDHWC32", is_input=0, is_output=0
+[VENUS]   shape dims=[1,1,1,64,32]
+[VENUS] TensorX::TensorX default ctor this=0x76d3bc50 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76d3bc50, old_ndims=0, new_ndims=5)
+[VENUS] TensorX::set_shape: dims_begin=0x76d368c0 dims_end=0x76d368d4 cap=0x76d368d4 [1,1,1,64,32]
+[VENUS] core::oram_malloc(size=2048)
+[VENUS] core::oram_malloc returning 0x76d30000
+[VENUS] Created tensor: 2048 bytes (aligned=2048), dtype=6, fmt=1, shape=[1,1,1,64,32]
+[VENUS] build_tensors: create_tensor returned 0x76d3bc50 for '__FormatConvert__20'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76d3bc50, this=0x76d36c40)
+[VENUS] build_tensors: [14] name='onnx__QuantizeConcatInference_301' is_input=1 is_output=0
+[VENUS] build_tensors: calling create_tensor for 'onnx__QuantizeConcatInference_301'
+[VENUS] MagikModelBase::create_tensor(name=onnx__QuantizeConcatInference_301)
+[VENUS]   dtype_str="UINT8", layout="NHWC", is_input=1, is_output=0
+[VENUS]   shape dims=[1,1,64,32]
+[VENUS] TensorX::TensorX default ctor this=0x76d3bca0 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76d3bca0, old_ndims=0, new_ndims=4)
+[VENUS] TensorX::set_shape: dims_begin=0x76d369a0 dims_end=0x76d369b0 cap=0x76d369b0 [1,1,64,32]
+[VENUS] core::oram_malloc(size=2048)
+[VENUS] core::oram_malloc returning 0x76d2f000
+[VENUS] Created tensor: 2048 bytes (aligned=2048), dtype=6, fmt=1, shape=[1,1,64,32]
+[VENUS] build_tensors: create_tensor returned 0x76d3bca0 for 'onnx__QuantizeConcatInference_301'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76d3bca0, this=0x76d36d60)
+[VENUS] build_tensors: marking 'onnx__QuantizeConcatInference_301' as model INPUT (index=7)
+[VENUS] build_tensors: [15] name='__FormatConvert__19' is_input=0 is_output=0
+[VENUS] build_tensors: calling create_tensor for '__FormatConvert__19'
+[VENUS] MagikModelBase::create_tensor(name=__FormatConvert__19)
+[VENUS]   dtype_str="UINT8", layout="NDHWC32", is_input=0, is_output=0
+[VENUS]   shape dims=[1,1,1,64,32]
+[VENUS] TensorX::TensorX default ctor this=0x76d3bcf0 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76d3bcf0, old_ndims=0, new_ndims=5)
+[VENUS] TensorX::set_shape: dims_begin=0x76d36a20 dims_end=0x76d36a34 cap=0x76d36a34 [1,1,1,64,32]
+[VENUS] core::oram_malloc(size=2048)
+[VENUS] core::oram_malloc returning 0x76d2e000
+[VENUS] Created tensor: 2048 bytes (aligned=2048), dtype=6, fmt=1, shape=[1,1,1,64,32]
+[VENUS] build_tensors: create_tensor returned 0x76d3bcf0 for '__FormatConvert__19'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76d3bcf0, this=0x76d36f10)
+[VENUS] build_tensors: [16] name='onnx__QuantizeConcatInference_289' is_input=1 is_output=0
+[VENUS] build_tensors: calling create_tensor for 'onnx__QuantizeConcatInference_289'
+[VENUS] MagikModelBase::create_tensor(name=onnx__QuantizeConcatInference_289)
+[VENUS]   dtype_str="UINT8", layout="NHWC", is_input=1, is_output=0
+[VENUS]   shape dims=[1,1,64,32]
+[VENUS] TensorX::TensorX default ctor this=0x76d3bd40 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76d3bd40, old_ndims=0, new_ndims=4)
+[VENUS] TensorX::set_shape: dims_begin=0x76d36b00 dims_end=0x76d36b10 cap=0x76d36b10 [1,1,64,32]
+[VENUS] core::oram_malloc(size=2048)
+[VENUS] core::oram_malloc returning 0x76d2c000
+[VENUS] Created tensor: 2048 bytes (aligned=2048), dtype=6, fmt=1, shape=[1,1,64,32]
+[VENUS] build_tensors: create_tensor returned 0x76d3bd40 for 'onnx__QuantizeConcatInference_289'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76d3bd40, this=0x76d2d020)
+[VENUS] build_tensors: marking 'onnx__QuantizeConcatInference_289' as model INPUT (index=8)
+[VENUS] build_tensors: [17] name='__FormatConvert__18' is_input=0 is_output=0
+[VENUS] build_tensors: calling create_tensor for '__FormatConvert__18'
+[VENUS] MagikModelBase::create_tensor(name=__FormatConvert__18)
+[VENUS]   dtype_str="UINT8", layout="NDHWC32", is_input=0, is_output=0
+[VENUS]   shape dims=[1,1,1,64,32]
+[VENUS] TensorX::TensorX default ctor this=0x76d3ba60 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76d3ba60, old_ndims=0, new_ndims=5)
+[VENUS] TensorX::set_shape: dims_begin=0x76d36b80 dims_end=0x76d36b94 cap=0x76d36b94 [1,1,1,64,32]
+[VENUS] core::oram_malloc(size=2048)
+[VENUS] core::oram_malloc returning 0x76d2b000
+[VENUS] Created tensor: 2048 bytes (aligned=2048), dtype=6, fmt=1, shape=[1,1,1,64,32]
+[VENUS] build_tensors: create_tensor returned 0x76d3ba60 for '__FormatConvert__18'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76d3ba60, this=0x76d2d1d0)
+[VENUS] build_tensors: [18] name='onnx__QuantizeConcatInference_277' is_input=1 is_output=0
+[VENUS] build_tensors: calling create_tensor for 'onnx__QuantizeConcatInference_277'
+[VENUS] MagikModelBase::create_tensor(name=onnx__QuantizeConcatInference_277)
+[VENUS]   dtype_str="UINT8", layout="NHWC", is_input=1, is_output=0
+[VENUS]   shape dims=[1,1,128,32]
+[VENUS] TensorX::TensorX default ctor this=0x76d3bab0 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76d3bab0, old_ndims=0, new_ndims=4)
+[VENUS] TensorX::set_shape: dims_begin=0x76d36980 dims_end=0x76d36990 cap=0x76d36990 [1,1,128,32]
+[VENUS] core::oram_malloc(size=4096)
+[VENUS] core::oram_malloc returning 0x76d2a000
+[VENUS] Created tensor: 4096 bytes (aligned=4096), dtype=6, fmt=1, shape=[1,1,128,32]
+[VENUS] build_tensors: create_tensor returned 0x76d3bab0 for 'onnx__QuantizeConcatInference_277'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76d3bab0, this=0x76d2d2f0)
+[VENUS] build_tensors: marking 'onnx__QuantizeConcatInference_277' as model INPUT (index=9)
+[VENUS] build_tensors: [19] name='__FormatConvert__17' is_input=0 is_output=0
+[VENUS] build_tensors: calling create_tensor for '__FormatConvert__17'
+[VENUS] MagikModelBase::create_tensor(name=__FormatConvert__17)
+[VENUS]   dtype_str="UINT8", layout="NDHWC32", is_input=0, is_output=0
+[VENUS]   shape dims=[1,1,1,128,32]
+[VENUS] TensorX::TensorX default ctor this=0x76d29030 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76d29030, old_ndims=0, new_ndims=5)
+[VENUS] TensorX::set_shape: dims_begin=0x76d36b40 dims_end=0x76d36b54 cap=0x76d36b54 [1,1,1,128,32]
+[VENUS] core::oram_malloc(size=4096)
+[VENUS] core::oram_malloc returning 0x76d28000
+[VENUS] Created tensor: 4096 bytes (aligned=4096), dtype=6, fmt=1, shape=[1,1,1,128,32]
+[VENUS] build_tensors: create_tensor returned 0x76d29030 for '__FormatConvert__17'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76d29030, this=0x76d2d470)
+[VENUS] build_tensors: [20] name='input' is_input=1 is_output=0
+[VENUS] build_tensors: calling create_tensor for 'input'
+[VENUS] MagikModelBase::create_tensor(name=input)
+[VENUS]   dtype_str="FP32", layout="NHWC", is_input=1, is_output=0
+[VENUS]   shape dims=[1,1,256,8]
+[VENUS] TensorX::TensorX default ctor this=0x76d29080 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76d29080, old_ndims=0, new_ndims=4)
+[VENUS] TensorX::set_shape: dims_begin=0x76d2d840 dims_end=0x76d2d850 cap=0x76d2d850 [1,1,256,8]
+[VENUS] core::oram_malloc(size=8192)
+[VENUS] core::oram_malloc returning 0x76d26000
+[VENUS] Created tensor: 8192 bytes (aligned=8192), dtype=1, fmt=1, shape=[1,1,256,8]
+[VENUS] build_tensors: create_tensor returned 0x76d29080 for 'input'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76d29080, this=0x76d2d560)
+[VENUS] build_tensors: marking 'input' as model INPUT (index=10)
+[VENUS] build_tensors: [21] name='layer_80_QuantizeBatchNorm' is_input=0 is_output=0
+[VENUS] build_tensors: calling create_tensor for 'layer_80_QuantizeBatchNorm'
+[VENUS] MagikModelBase::create_tensor(name=layer_80_QuantizeBatchNorm)
+[VENUS]   dtype_str="UINT8", layout="NHWC", is_input=0, is_output=0
+[VENUS]   shape dims=[1,1,256,8]
+[VENUS] TensorX::TensorX default ctor this=0x76d290d0 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76d290d0, old_ndims=0, new_ndims=4)
+[VENUS] TensorX::set_shape: dims_begin=0x76d2d8c0 dims_end=0x76d2d8d0 cap=0x76d2d8d0 [1,1,256,8]
+[VENUS] core::oram_malloc(size=2048)
+[VENUS] core::oram_malloc returning 0x76d25000
+[VENUS] Created tensor: 2048 bytes (aligned=2048), dtype=6, fmt=1, shape=[1,1,256,8]
+[VENUS] build_tensors: create_tensor returned 0x76d290d0 for 'layer_80_QuantizeBatchNorm'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76d290d0, this=0x76d2d650)
+[VENUS] build_tensors: [22] name='__FormatConvert__15' is_input=0 is_output=0
+[VENUS] build_tensors: calling create_tensor for '__FormatConvert__15'
+[VENUS] MagikModelBase::create_tensor(name=__FormatConvert__15)
+[VENUS]   dtype_str="UINT8", layout="NDHWC32", is_input=0, is_output=0
+[VENUS]   shape dims=[1,1,1,256,32]
+[VENUS] TensorX::TensorX default ctor this=0x76d29120 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76d29120, old_ndims=0, new_ndims=5)
+[VENUS] TensorX::set_shape: dims_begin=0x76d2d9c0 dims_end=0x76d2d9d4 cap=0x76d2d9d4 [1,1,1,256,32]
+[VENUS] core::oram_malloc(size=8192)
+[VENUS] core::oram_malloc returning 0x76d23000
+[VENUS] Created tensor: 8192 bytes (aligned=8192), dtype=6, fmt=1, shape=[1,1,1,256,32]
+[VENUS] build_tensors: create_tensor returned 0x76d29120 for '__FormatConvert__15'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76d29120, this=0x76d2d740)
+[VENUS] build_tensors: [23] name='layer_78_QuantizeFeature' is_input=0 is_output=0
+[VENUS] build_tensors: calling create_tensor for 'layer_78_QuantizeFeature'
+[VENUS] MagikModelBase::create_tensor(name=layer_78_QuantizeFeature)
+[VENUS]   dtype_str="UINT8", layout="NDHWC32", is_input=0, is_output=0
+[VENUS]   shape dims=[1,1,1,128,32]
+[VENUS] TensorX::TensorX default ctor this=0x76d29170 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76d29170, old_ndims=0, new_ndims=5)
+[VENUS] TensorX::set_shape: dims_begin=0x76d2dac0 dims_end=0x76d2dad4 cap=0x76d2dad4 [1,1,1,128,32]
+[VENUS] core::oram_malloc(size=4096)
+[VENUS] core::oram_malloc returning 0x76d22000
+[VENUS] Created tensor: 4096 bytes (aligned=4096), dtype=6, fmt=1, shape=[1,1,1,128,32]
+[VENUS] build_tensors: create_tensor returned 0x76d29170 for 'layer_78_QuantizeFeature'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76d29170, this=0x76d2dc50)
+[VENUS] build_tensors: [24] name='layer_73_QuantizeFeature' is_input=0 is_output=0
+[VENUS] build_tensors: calling create_tensor for 'layer_73_QuantizeFeature'
+[VENUS] MagikModelBase::create_tensor(name=layer_73_QuantizeFeature)
+[VENUS]   dtype_str="UINT8", layout="NDHWC32", is_input=0, is_output=0
+[VENUS]   shape dims=[1,1,1,64,32]
+[VENUS] TensorX::TensorX default ctor this=0x76d291c0 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76d291c0, old_ndims=0, new_ndims=5)
+[VENUS] TensorX::set_shape: dims_begin=0x76d2dbc0 dims_end=0x76d2dbd4 cap=0x76d2dbd4 [1,1,1,64,32]
+[VENUS] core::oram_malloc(size=2048)
+[VENUS] core::oram_malloc returning 0x76d21000
+[VENUS] Created tensor: 2048 bytes (aligned=2048), dtype=6, fmt=1, shape=[1,1,1,64,32]
+[VENUS] build_tensors: create_tensor returned 0x76d291c0 for 'layer_73_QuantizeFeature'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76d291c0, this=0x76d2dd40)
+[VENUS] build_tensors: [25] name='layer_68_QuantizeFeature' is_input=0 is_output=0
+[VENUS] build_tensors: calling create_tensor for 'layer_68_QuantizeFeature'
+[VENUS] MagikModelBase::create_tensor(name=layer_68_QuantizeFeature)
+[VENUS]   dtype_str="UINT8", layout="NDHWC32", is_input=0, is_output=0
+[VENUS]   shape dims=[1,1,1,64,32]
+[VENUS] TensorX::TensorX default ctor this=0x76d29220 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76d29220, old_ndims=0, new_ndims=5)
+[VENUS] TensorX::set_shape: dims_begin=0x76d2db80 dims_end=0x76d2db94 cap=0x76d2db94 [1,1,1,64,32]
+[VENUS] core::oram_malloc(size=2048)
+[VENUS] core::oram_malloc returning 0x76d20000
+[VENUS] Created tensor: 2048 bytes (aligned=2048), dtype=6, fmt=1, shape=[1,1,1,64,32]
+[VENUS] build_tensors: create_tensor returned 0x76d29220 for 'layer_68_QuantizeFeature'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76d29220, this=0x76d2de30)
+[VENUS] build_tensors: [26] name='layer_63_QuantizeFeature' is_input=0 is_output=0
+[VENUS] build_tensors: calling create_tensor for 'layer_63_QuantizeFeature'
+[VENUS] MagikModelBase::create_tensor(name=layer_63_QuantizeFeature)
+[VENUS]   dtype_str="UINT8", layout="NDHWC32", is_input=0, is_output=0
+[VENUS]   shape dims=[1,1,1,64,32]
+[VENUS] TensorX::TensorX default ctor this=0x76d29270 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76d29270, old_ndims=0, new_ndims=5)
+[VENUS] TensorX::set_shape: dims_begin=0x76d1f0a0 dims_end=0x76d1f0b4 cap=0x76d1f0b4 [1,1,1,64,32]
+[VENUS] core::oram_malloc(size=2048)
+[VENUS] core::oram_malloc returning 0x76d1e000
+[VENUS] Created tensor: 2048 bytes (aligned=2048), dtype=6, fmt=1, shape=[1,1,1,64,32]
+[VENUS] build_tensors: create_tensor returned 0x76d29270 for 'layer_63_QuantizeFeature'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76d29270, this=0x76d2df20)
+[VENUS] build_tensors: [27] name='layer_58_QuantizeFeature' is_input=0 is_output=0
+[VENUS] build_tensors: calling create_tensor for 'layer_58_QuantizeFeature'
+[VENUS] MagikModelBase::create_tensor(name=layer_58_QuantizeFeature)
+[VENUS]   dtype_str="UINT8", layout="NDHWC32", is_input=0, is_output=0
+[VENUS]   shape dims=[1,1,1,64,32]
+[VENUS] TensorX::TensorX default ctor this=0x76d292c0 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76d292c0, old_ndims=0, new_ndims=5)
+[VENUS] TensorX::set_shape: dims_begin=0x76d1f1a0 dims_end=0x76d1f1b4 cap=0x76d1f1b4 [1,1,1,64,32]
+[VENUS] core::oram_malloc(size=2048)
+[VENUS] core::oram_malloc returning 0x76d1d000
+[VENUS] Created tensor: 2048 bytes (aligned=2048), dtype=6, fmt=1, shape=[1,1,1,64,32]
+[VENUS] build_tensors: create_tensor returned 0x76d292c0 for 'layer_58_QuantizeFeature'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76d292c0, this=0x76d1f470)
+[VENUS] build_tensors: [28] name='__FormatConvert__10' is_input=0 is_output=1
+[VENUS] build_tensors: calling create_tensor for '__FormatConvert__10'
+[VENUS] MagikModelBase::create_tensor(name=__FormatConvert__10)
+[VENUS]   dtype_str="UINT8", layout="NHWC", is_input=0, is_output=1
+[VENUS]   shape dims=[1,1,64,32]
+[VENUS] TensorX::TensorX default ctor this=0x76d29310 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76d29310, old_ndims=0, new_ndims=4)
+[VENUS] TensorX::set_shape: dims_begin=0x76d1f2a0 dims_end=0x76d1f2b0 cap=0x76d1f2b0 [1,1,64,32]
+[VENUS] core::oram_malloc(size=2048)
+[VENUS] core::oram_malloc returning 0x76d1c000
+[VENUS] Created tensor: 2048 bytes (aligned=2048), dtype=6, fmt=1, shape=[1,1,64,32]
+[VENUS] build_tensors: create_tensor returned 0x76d29310 for '__FormatConvert__10'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76d29310, this=0x76d1f560)
+[VENUS] build_tensors: marking '__FormatConvert__10' as model OUTPUT (index=0)
+[VENUS] build_tensors: [29] name='input.3' is_input=0 is_output=0
+[VENUS] build_tensors: calling create_tensor for 'input.3'
+[VENUS] MagikModelBase::create_tensor(name=input.3)
+[VENUS]   dtype_str="UINT8", layout="NHWC", is_input=0, is_output=0
+[VENUS]   shape dims=[1,1,64,32]
+[VENUS] TensorX::TensorX default ctor this=0x76d29360 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76d29360, old_ndims=0, new_ndims=4)
+[VENUS] TensorX::set_shape: dims_begin=0x76d1f380 dims_end=0x76d1f390 cap=0x76d1f390 [1,1,64,32]
+[VENUS] core::oram_malloc(size=2048)
+[VENUS] core::oram_malloc returning 0x76d1b000
+[VENUS] Created tensor: 2048 bytes (aligned=2048), dtype=6, fmt=1, shape=[1,1,64,32]
+[VENUS] build_tensors: create_tensor returned 0x76d29360 for 'input.3'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76d29360, this=0x76d1f650)
+[VENUS] build_tensors: [30] name='layer_46_QuantizeGRU' is_input=0 is_output=0
+[VENUS] build_tensors: calling create_tensor for 'layer_46_QuantizeGRU'
+[VENUS] MagikModelBase::create_tensor(name=layer_46_QuantizeGRU)
+[VENUS]   dtype_str="UINT8", layout="NHWC", is_input=0, is_output=0
+[VENUS]   shape dims=[1,64,2,32]
+[VENUS] TensorX::TensorX default ctor this=0x76d293b0 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76d293b0, old_ndims=0, new_ndims=4)
+[VENUS] TensorX::set_shape: dims_begin=0x76d1f060 dims_end=0x76d1f070 cap=0x76d1f070 [1,64,2,32]
+[VENUS] core::oram_malloc(size=4096)
+[VENUS] core::oram_malloc returning 0x76d1a000
+[VENUS] Created tensor: 4096 bytes (aligned=4096), dtype=6, fmt=1, shape=[1,64,2,32]
+[VENUS] build_tensors: create_tensor returned 0x76d293b0 for 'layer_46_QuantizeGRU'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76d293b0, this=0x76d1f740)
+[VENUS] build_tensors: [31] name='__Reshape__0' is_input=0 is_output=0
+[VENUS] build_tensors: calling create_tensor for '__Reshape__0'
+[VENUS] MagikModelBase::create_tensor(name=__Reshape__0)
+[VENUS]   dtype_str="UINT8", layout="NHWC", is_input=0, is_output=0
+[VENUS]   shape dims=[1,64,64]
+[VENUS] TensorX::TensorX default ctor this=0x76d29410 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76d29410, old_ndims=0, new_ndims=3)
+[VENUS] TensorX::set_shape: dims_begin=0x7761cf40 dims_end=0x7761cf4c cap=0x7761cf4c [1,64,64]
+[VENUS] core::oram_malloc(size=4096)
+[VENUS] core::oram_malloc returning 0x76d19000
+[VENUS] Created tensor: 4096 bytes (aligned=4096), dtype=6, fmt=1, shape=[1,64,64]
+[VENUS] build_tensors: create_tensor returned 0x76d29410 for '__Reshape__0'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76d29410, this=0x76d1f860)
+[VENUS] build_tensors: [32] name='__FormatConvert__1' is_input=0 is_output=0
+[VENUS] build_tensors: calling create_tensor for '__FormatConvert__1'
+[VENUS] MagikModelBase::create_tensor(name=__FormatConvert__1)
+[VENUS]   dtype_str="UINT8", layout="NDHWC32", is_input=0, is_output=0
+[VENUS]   shape dims=[1,2,1,64,32]
+[VENUS] TensorX::TensorX default ctor this=0x76d29460 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76d29460, old_ndims=0, new_ndims=5)
+[VENUS] TensorX::set_shape: dims_begin=0x76d1fbf0 dims_end=0x76d1fc04 cap=0x76d1fc04 [1,2,1,64,32]
+[VENUS] core::oram_malloc(size=4096)
+[VENUS] core::oram_malloc returning 0x76d18000
+[VENUS] Created tensor: 4096 bytes (aligned=4096), dtype=6, fmt=1, shape=[1,2,1,64,32]
+[VENUS] build_tensors: create_tensor returned 0x76d29460 for '__FormatConvert__1'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76d29460, this=0x76d1f950)
+[VENUS] build_tensors: [33] name='layer_44_QuantizeFeature' is_input=0 is_output=0
+[VENUS] build_tensors: calling create_tensor for 'layer_44_QuantizeFeature'
+[VENUS] MagikModelBase::create_tensor(name=layer_44_QuantizeFeature)
+[VENUS]   dtype_str="UINT8", layout="NDHWC32", is_input=0, is_output=0
+[VENUS]   shape dims=[1,1,1,64,32]
+[VENUS] TensorX::TensorX default ctor this=0x76d294b0 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76d294b0, old_ndims=0, new_ndims=5)
+[VENUS] TensorX::set_shape: dims_begin=0x76d1fcf0 dims_end=0x76d1fd04 cap=0x76d1fd04 [1,1,1,64,32]
+[VENUS] core::oram_malloc(size=2048)
+[VENUS] core::oram_malloc returning 0x76d17000
+[VENUS] Created tensor: 2048 bytes (aligned=2048), dtype=6, fmt=1, shape=[1,1,1,64,32]
+[VENUS] build_tensors: create_tensor returned 0x76d294b0 for 'layer_44_QuantizeFeature'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76d294b0, this=0x76d1fa40)
+[VENUS] build_tensors: [34] name='__FormatConvert__9' is_input=0 is_output=0
+[VENUS] build_tensors: calling create_tensor for '__FormatConvert__9'
+[VENUS] MagikModelBase::create_tensor(name=__FormatConvert__9)
+[VENUS]   dtype_str="UINT8", layout="NHWC", is_input=0, is_output=0
+[VENUS]   shape dims=[1,1,64,32]
+[VENUS] TensorX::TensorX default ctor this=0x76d29500 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76d29500, old_ndims=0, new_ndims=4)
+[VENUS] TensorX::set_shape: dims_begin=0x76d1fdf0 dims_end=0x76d1fe00 cap=0x76d1fe00 [1,1,64,32]
+[VENUS] core::oram_malloc(size=2048)
+[VENUS] core::oram_malloc returning 0x76d16000
+[VENUS] Created tensor: 2048 bytes (aligned=2048), dtype=6, fmt=1, shape=[1,1,64,32]
+[VENUS] build_tensors: create_tensor returned 0x76d29500 for '__FormatConvert__9'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76d29500, this=0x76d1fb30)
+[VENUS] build_tensors: [35] name='onnx__Transpose_371' is_input=0 is_output=0
+[VENUS] build_tensors: calling create_tensor for 'onnx__Transpose_371'
+[VENUS] MagikModelBase::create_tensor(name=onnx__Transpose_371)
+[VENUS]   dtype_str="UINT8", layout="NHWC", is_input=0, is_output=0
+[VENUS]   shape dims=[1,1,64,32]
+[VENUS] TensorX::TensorX default ctor this=0x76d29550 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76d29550, old_ndims=0, new_ndims=4)
+[VENUS] TensorX::set_shape: dims_begin=0x76d1fef0 dims_end=0x76d1ff00 cap=0x76d1ff00 [1,1,64,32]
+[VENUS] core::oram_malloc(size=2048)
+[VENUS] core::oram_malloc returning 0x76d14000
+[VENUS] Created tensor: 2048 bytes (aligned=2048), dtype=6, fmt=1, shape=[1,1,64,32]
+[VENUS] build_tensors: create_tensor returned 0x76d29550 for 'onnx__Transpose_371'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76d29550, this=0x76d15080)
+[VENUS] build_tensors: [36] name='__FormatConvert__27' is_input=0 is_output=0
+[VENUS] build_tensors: calling create_tensor for '__FormatConvert__27'
+[VENUS] MagikModelBase::create_tensor(name=__FormatConvert__27)
+[VENUS]   dtype_str="UINT8", layout="NDHWC32", is_input=0, is_output=0
+[VENUS]   shape dims=[1,1,1,64,32]
+[VENUS] TensorX::TensorX default ctor this=0x76d295a0 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76d295a0, old_ndims=0, new_ndims=5)
+[VENUS] TensorX::set_shape: dims_begin=0x76d1f3e0 dims_end=0x76d1f3f4 cap=0x76d1f3f4 [1,1,1,64,32]
+[VENUS] core::oram_malloc(size=2048)
+[VENUS] core::oram_malloc returning 0x76d13000
+[VENUS] Created tensor: 2048 bytes (aligned=2048), dtype=6, fmt=1, shape=[1,1,1,64,32]
+[VENUS] build_tensors: create_tensor returned 0x76d295a0 for '__FormatConvert__27'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76d295a0, this=0x76d15170)
+[VENUS] build_tensors: [37] name='layer_43_QuantizeBatchNorm' is_input=0 is_output=0
+[VENUS] build_tensors: calling create_tensor for 'layer_43_QuantizeBatchNorm'
+[VENUS] MagikModelBase::create_tensor(name=layer_43_QuantizeBatchNorm)
+[VENUS]   dtype_str="UINT8", layout="NDHWC32", is_input=0, is_output=0
+[VENUS]   shape dims=[1,1,1,64,32]
+[VENUS] TensorX::TensorX default ctor this=0x76d29600 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76d29600, old_ndims=0, new_ndims=5)
+[VENUS] TensorX::set_shape: dims_begin=0x76d1ffb0 dims_end=0x76d1ffc4 cap=0x76d1ffc4 [1,1,1,64,32]
+[VENUS] core::oram_malloc(size=2048)
+[VENUS] core::oram_malloc returning 0x76d12000
+[VENUS] Created tensor: 2048 bytes (aligned=2048), dtype=6, fmt=1, shape=[1,1,1,64,32]
+[VENUS] build_tensors: create_tensor returned 0x76d29600 for 'layer_43_QuantizeBatchNorm'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76d29600, this=0x76d15260)
+[VENUS] build_tensors: [38] name='layer_41_QuantizeFeature' is_input=0 is_output=0
+[VENUS] build_tensors: calling create_tensor for 'layer_41_QuantizeFeature'
+[VENUS] MagikModelBase::create_tensor(name=layer_41_QuantizeFeature)
+[VENUS]   dtype_str="UINT8", layout="NDHWC32", is_input=0, is_output=0
+[VENUS]   shape dims=[1,1,1,64,32]
+[VENUS] TensorX::TensorX default ctor this=0x76d29650 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76d29650, old_ndims=0, new_ndims=5)
+[VENUS] TensorX::set_shape: dims_begin=0x76d154f0 dims_end=0x76d15504 cap=0x76d15504 [1,1,1,64,32]
+[VENUS] core::oram_malloc(size=2048)
+[VENUS] core::oram_malloc returning 0x76d11000
+[VENUS] Created tensor: 2048 bytes (aligned=2048), dtype=6, fmt=1, shape=[1,1,1,64,32]
+[VENUS] build_tensors: create_tensor returned 0x76d29650 for 'layer_41_QuantizeFeature'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76d29650, this=0x76d15350)
+[VENUS] build_tensors: [39] name='__FormatConvert__8' is_input=0 is_output=0
+[VENUS] build_tensors: calling create_tensor for '__FormatConvert__8'
+[VENUS] MagikModelBase::create_tensor(name=__FormatConvert__8)
+[VENUS]   dtype_str="UINT8", layout="NHWC", is_input=0, is_output=0
+[VENUS]   shape dims=[1,1,64,32]
+[VENUS] TensorX::TensorX default ctor this=0x76d296a0 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76d296a0, old_ndims=0, new_ndims=4)
+[VENUS] TensorX::set_shape: dims_begin=0x76d155f0 dims_end=0x76d15600 cap=0x76d15600 [1,1,64,32]
+[VENUS] core::oram_malloc(size=2048)
+[VENUS] core::oram_malloc returning 0x76d10000
+[VENUS] Created tensor: 2048 bytes (aligned=2048), dtype=6, fmt=1, shape=[1,1,64,32]
+[VENUS] build_tensors: create_tensor returned 0x76d296a0 for '__FormatConvert__8'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76d296a0, this=0x76d15860)
+[VENUS] build_tensors: [40] name='input.15' is_input=0 is_output=0
+[VENUS] build_tensors: calling create_tensor for 'input.15'
+[VENUS] MagikModelBase::create_tensor(name=input.15)
+[VENUS]   dtype_str="UINT8", layout="NHWC", is_input=0, is_output=0
+[VENUS]   shape dims=[64,1,1,32]
+[VENUS] TensorX::TensorX default ctor this=0x76d296f0 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76d296f0, old_ndims=0, new_ndims=4)
+[VENUS] TensorX::set_shape: dims_begin=0x76d156d0 dims_end=0x76d156e0 cap=0x76d156e0 [64,1,1,32]
+[VENUS] core::oram_malloc(size=2048)
+[VENUS] core::oram_malloc returning 0x76d0f000
+[VENUS] Created tensor: 2048 bytes (aligned=2048), dtype=6, fmt=1, shape=[64,1,1,32]
+[VENUS] build_tensors: create_tensor returned 0x76d296f0 for 'input.15'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76d296f0, this=0x76d15950)
+[VENUS] build_tensors: [41] name='312_last_layer' is_input=0 is_output=1
+[VENUS] build_tensors: calling create_tensor for '312_last_layer'
+[VENUS] MagikModelBase::create_tensor(name=312_last_layer)
+[VENUS]   dtype_str="UINT8", layout="NHWC", is_input=0, is_output=1
+[VENUS]   shape dims=[1,1,64,32]
+[VENUS] TensorX::TensorX default ctor this=0x76d29740 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76d29740, old_ndims=0, new_ndims=4)
+[VENUS] TensorX::set_shape: dims_begin=0x76d15730 dims_end=0x76d15740 cap=0x76d15740 [1,1,64,32]
+[VENUS] core::oram_malloc(size=2048)
+[VENUS] core::oram_malloc returning 0x76d0e000
+[VENUS] Created tensor: 2048 bytes (aligned=2048), dtype=6, fmt=1, shape=[1,1,64,32]
+[VENUS] build_tensors: create_tensor returned 0x76d29740 for '312_last_layer'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76d29740, this=0x76d15a40)
+[VENUS] build_tensors: marking '312_last_layer' as model OUTPUT (index=1)
+[VENUS] build_tensors: [42] name='300_last_layer' is_input=0 is_output=1
+[VENUS] build_tensors: calling create_tensor for '300_last_layer'
+[VENUS] MagikModelBase::create_tensor(name=300_last_layer)
+[VENUS]   dtype_str="UINT8", layout="NHWC", is_input=0, is_output=1
+[VENUS]   shape dims=[1,1,64,32]
+[VENUS] TensorX::TensorX default ctor this=0x76d29790 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76d29790, old_ndims=0, new_ndims=4)
+[VENUS] TensorX::set_shape: dims_begin=0x76d15790 dims_end=0x76d157a0 cap=0x76d157a0 [1,1,64,32]
+[VENUS] core::oram_malloc(size=2048)
+[VENUS] core::oram_malloc returning 0x76d0d000
+[VENUS] Created tensor: 2048 bytes (aligned=2048), dtype=6, fmt=1, shape=[1,1,64,32]
+[VENUS] build_tensors: create_tensor returned 0x76d29790 for '300_last_layer'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76d29790, this=0x76d15b30)
+[VENUS] build_tensors: marking '300_last_layer' as model OUTPUT (index=2)
+[VENUS] build_tensors: [43] name='288_last_layer' is_input=0 is_output=1
+[VENUS] build_tensors: calling create_tensor for '288_last_layer'
+[VENUS] MagikModelBase::create_tensor(name=288_last_layer)
+[VENUS]   dtype_str="UINT8", layout="NHWC", is_input=0, is_output=1
+[VENUS]   shape dims=[1,1,64,32]
+[VENUS] TensorX::TensorX default ctor this=0x76d3bdf0 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76d3bdf0, old_ndims=0, new_ndims=4)
+[VENUS] TensorX::set_shape: dims_begin=0x76d1fed0 dims_end=0x76d1fee0 cap=0x76d1fee0 [1,1,64,32]
+[VENUS] core::oram_malloc(size=2048)
+[VENUS] core::oram_malloc returning 0x76d0c000
+[VENUS] Created tensor: 2048 bytes (aligned=2048), dtype=6, fmt=1, shape=[1,1,64,32]
+[VENUS] build_tensors: create_tensor returned 0x76d3bdf0 for '288_last_layer'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76d3bdf0, this=0x76d15c50)
+[VENUS] build_tensors: marking '288_last_layer' as model OUTPUT (index=3)
+[VENUS] build_tensors: [44] name='276_last_layer' is_input=0 is_output=1
+[VENUS] build_tensors: calling create_tensor for '276_last_layer'
+[VENUS] MagikModelBase::create_tensor(name=276_last_layer)
+[VENUS]   dtype_str="UINT8", layout="NHWC", is_input=0, is_output=1
+[VENUS]   shape dims=[1,1,128,32]
+[VENUS] TensorX::TensorX default ctor this=0x76d3be40 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76d3be40, old_ndims=0, new_ndims=4)
+[VENUS] TensorX::set_shape: dims_begin=0x76d155b0 dims_end=0x76d155c0 cap=0x76d155c0 [1,1,128,32]
+[VENUS] core::oram_malloc(size=4096)
+[VENUS] core::oram_malloc returning 0x76d0b000
+[VENUS] Created tensor: 4096 bytes (aligned=4096), dtype=6, fmt=1, shape=[1,1,128,32]
+[VENUS] build_tensors: create_tensor returned 0x76d3be40 for '276_last_layer'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76d3be40, this=0x76d15d40)
+[VENUS] build_tensors: marking '276_last_layer' as model OUTPUT (index=4)
+[VENUS] build_tensors: [45] name='hidden' is_input=1 is_output=0
+[VENUS] build_tensors: calling create_tensor for 'hidden'
+[VENUS] MagikModelBase::create_tensor(name=hidden)
+[VENUS]   dtype_str="UINT8", layout="NHWC", is_input=1, is_output=0
+[VENUS]   shape dims=[64,1,1,32]
+[VENUS] TensorX::TensorX default ctor this=0x76d3be90 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76d3be90, old_ndims=0, new_ndims=4)
+[VENUS] TensorX::set_shape: dims_begin=0x76d15710 dims_end=0x76d15720 cap=0x76d15720 [64,1,1,32]
+[VENUS] core::oram_malloc(size=2048)
+[VENUS] core::oram_malloc returning 0x76d0a000
+[VENUS] Created tensor: 2048 bytes (aligned=2048), dtype=6, fmt=1, shape=[64,1,1,32]
+[VENUS] build_tensors: create_tensor returned 0x76d3be90 for 'hidden'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76d3be90, this=0x76d15e60)
+[VENUS] build_tensors: marking 'hidden' as model INPUT (index=11)
+[VENUS] build_tensors: [46] name='layer_37_QuantizeGRU' is_input=0 is_output=0
+[VENUS] build_tensors: calling create_tensor for 'layer_37_QuantizeGRU'
+[VENUS] MagikModelBase::create_tensor(name=layer_37_QuantizeGRU)
+[VENUS]   dtype_str="UINT8", layout="NHWC", is_input=0, is_output=0
+[VENUS]   shape dims=[64,1,1,32]
+[VENUS] TensorX::TensorX default ctor this=0x76d3bee0 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76d3bee0, old_ndims=0, new_ndims=4)
+[VENUS] TensorX::set_shape: dims_begin=0x76d156b0 dims_end=0x76d156c0 cap=0x76d156c0 [64,1,1,32]
+[VENUS] core::oram_malloc(size=2048)
+[VENUS] core::oram_malloc returning 0x76d09000
+[VENUS] Created tensor: 2048 bytes (aligned=2048), dtype=6, fmt=1, shape=[64,1,1,32]
+[VENUS] build_tensors: create_tensor returned 0x76d3bee0 for 'layer_37_QuantizeGRU'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76d3bee0, this=0x76d15f50)
+[VENUS] build_tensors: [47] name='layer_37_QuantizeGRU:1' is_input=0 is_output=1
+[VENUS] build_tensors: calling create_tensor for 'layer_37_QuantizeGRU:1'
+[VENUS] MagikModelBase::create_tensor(name=layer_37_QuantizeGRU:1)
+[VENUS]   dtype_str="UINT8", layout="NHWC", is_input=0, is_output=1
+[VENUS]   shape dims=[64,1,1,32]
+[VENUS] TensorX::TensorX default ctor this=0x76d3bf30 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76d3bf30, old_ndims=0, new_ndims=4)
+[VENUS] TensorX::set_shape: dims_begin=0x76d08490 dims_end=0x76d084a0 cap=0x76d084a0 [64,1,1,32]
+[VENUS] core::oram_malloc(size=2048)
+[VENUS] core::oram_malloc returning 0x76d07000
+[VENUS] Created tensor: 2048 bytes (aligned=2048), dtype=6, fmt=1, shape=[64,1,1,32]
+[VENUS] build_tensors: create_tensor returned 0x76d3bf30 for 'layer_37_QuantizeGRU:1'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76d3bf30, this=0x76d080b0)
+[VENUS] build_tensors: marking 'layer_37_QuantizeGRU:1' as model OUTPUT (index=5)
+[VENUS] build_tensors: [48] name='__Reshape__1' is_input=0 is_output=0
+[VENUS] build_tensors: calling create_tensor for '__Reshape__1'
+[VENUS] MagikModelBase::create_tensor(name=__Reshape__1)
+[VENUS]   dtype_str="UINT8", layout="NHWC", is_input=0, is_output=0
+[VENUS]   shape dims=[64,1,32]
+[VENUS] TensorX::TensorX default ctor this=0x76d3bf80 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76d3bf80, old_ndims=0, new_ndims=3)
+[VENUS] TensorX::set_shape: dims_begin=0x7761cf70 dims_end=0x7761cf7c cap=0x7761cf7c [64,1,32]
+[VENUS] core::oram_malloc(size=2048)
+[VENUS] core::oram_malloc returning 0x76d06000
+[VENUS] Created tensor: 2048 bytes (aligned=2048), dtype=6, fmt=1, shape=[64,1,32]
+[VENUS] build_tensors: create_tensor returned 0x76d3bf80 for '__Reshape__1'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76d3bf80, this=0x76d081a0)
+[VENUS] build_tensors: [49] name='__FormatConvert__2' is_input=0 is_output=0
+[VENUS] build_tensors: calling create_tensor for '__FormatConvert__2'
+[VENUS] MagikModelBase::create_tensor(name=__FormatConvert__2)
+[VENUS]   dtype_str="UINT8", layout="NDHWC32", is_input=0, is_output=0
+[VENUS]   shape dims=[64,1,1,1,32]
+[VENUS] TensorX::TensorX default ctor this=0x76d29820 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76d29820, old_ndims=0, new_ndims=5)
+[VENUS] TensorX::set_shape: dims_begin=0x76d085b0 dims_end=0x76d085c4 cap=0x76d085c4 [64,1,1,1,32]
+[VENUS] core::oram_malloc(size=2048)
+[VENUS] core::oram_malloc returning 0x76d05000
+[VENUS] Created tensor: 2048 bytes (aligned=2048), dtype=6, fmt=1, shape=[64,1,1,1,32]
+[VENUS] build_tensors: create_tensor returned 0x76d29820 for '__FormatConvert__2'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76d29820, this=0x76d08290)
+[VENUS] build_tensors: [50] name='layer_35_QuantizeFeature' is_input=0 is_output=0
+[VENUS] build_tensors: calling create_tensor for 'layer_35_QuantizeFeature'
+[VENUS] MagikModelBase::create_tensor(name=layer_35_QuantizeFeature)
+[VENUS]   dtype_str="UINT8", layout="NDHWC32", is_input=0, is_output=0
+[VENUS]   shape dims=[64,1,1,1,32]
+[VENUS] TensorX::TensorX default ctor this=0x76d29870 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76d29870, old_ndims=0, new_ndims=5)
+[VENUS] TensorX::set_shape: dims_begin=0x76d086b0 dims_end=0x76d086c4 cap=0x76d086c4 [64,1,1,1,32]
+[VENUS] core::oram_malloc(size=2048)
+[VENUS] core::oram_malloc returning 0x76d04000
+[VENUS] Created tensor: 2048 bytes (aligned=2048), dtype=6, fmt=1, shape=[64,1,1,1,32]
+[VENUS] build_tensors: create_tensor returned 0x76d29870 for 'layer_35_QuantizeFeature'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76d29870, this=0x76d08380)
+[VENUS] build_tensors: [51] name='__FormatConvert__7' is_input=0 is_output=0
+[VENUS] build_tensors: calling create_tensor for '__FormatConvert__7'
+[VENUS] MagikModelBase::create_tensor(name=__FormatConvert__7)
+[VENUS]   dtype_str="UINT8", layout="NHWC", is_input=0, is_output=0
+[VENUS]   shape dims=[64,1,1,32]
+[VENUS] TensorX::TensorX default ctor this=0x76d298c0 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76d298c0, old_ndims=0, new_ndims=4)
+[VENUS] TensorX::set_shape: dims_begin=0x76d087b0 dims_end=0x76d087c0 cap=0x76d087c0 [64,1,1,32]
+[VENUS] core::oram_malloc(size=2048)
+[VENUS] core::oram_malloc returning 0x76d03000
+[VENUS] Created tensor: 2048 bytes (aligned=2048), dtype=6, fmt=1, shape=[64,1,1,32]
+[VENUS] build_tensors: create_tensor returned 0x76d298c0 for '__FormatConvert__7'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76d298c0, this=0x76d08890)
+[VENUS] build_tensors: [52] name='onnx__Transpose_414' is_input=0 is_output=0
+[VENUS] build_tensors: calling create_tensor for 'onnx__Transpose_414'
+[VENUS] MagikModelBase::create_tensor(name=onnx__Transpose_414)
+[VENUS]   dtype_str="UINT8", layout="NHWC", is_input=0, is_output=0
+[VENUS]   shape dims=[1,64,1,32]
+[VENUS] TensorX::TensorX default ctor this=0x76d29910 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76d29910, old_ndims=0, new_ndims=4)
+[VENUS] TensorX::set_shape: dims_begin=0x76d08770 dims_end=0x76d08780 cap=0x76d08780 [1,64,1,32]
+[VENUS] core::oram_malloc(size=2048)
+[VENUS] core::oram_malloc returning 0x76d02000
+[VENUS] Created tensor: 2048 bytes (aligned=2048), dtype=6, fmt=1, shape=[1,64,1,32]
+[VENUS] build_tensors: create_tensor returned 0x76d29910 for 'onnx__Transpose_414'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76d29910, this=0x76d08980)
+[VENUS] build_tensors: [53] name='__ConvertTensor__18' is_input=0 is_output=0
+[VENUS] build_tensors: calling create_tensor for '__ConvertTensor__18'
+[VENUS] MagikModelBase::create_tensor(name=__ConvertTensor__18)
+[VENUS]   dtype_str="UINT8", layout="NHWC", is_input=0, is_output=0
+[VENUS]   shape dims=[1,1,64,32]
+[VENUS] TensorX::TensorX default ctor this=0x76d29960 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76d29960, old_ndims=0, new_ndims=4)
+[VENUS] TensorX::set_shape: dims_begin=0x76d08c70 dims_end=0x76d08c80 cap=0x76d08c80 [1,1,64,32]
+[VENUS] core::oram_malloc(size=2048)
+[VENUS] core::oram_malloc returning 0x76d01000
+[VENUS] Created tensor: 2048 bytes (aligned=2048), dtype=6, fmt=1, shape=[1,1,64,32]
+[VENUS] build_tensors: create_tensor returned 0x76d29960 for '__ConvertTensor__18'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76d29960, this=0x76d08a70)
+[VENUS] build_tensors: [54] name='__FormatConvert__0' is_input=0 is_output=0
+[VENUS] build_tensors: calling create_tensor for '__FormatConvert__0'
+[VENUS] MagikModelBase::create_tensor(name=__FormatConvert__0)
+[VENUS]   dtype_str="UINT8", layout="NDHWC32", is_input=0, is_output=0
+[VENUS]   shape dims=[1,1,1,64,32]
+[VENUS] TensorX::TensorX default ctor this=0x76d299b0 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76d299b0, old_ndims=0, new_ndims=5)
+[VENUS] TensorX::set_shape: dims_begin=0x76d08d70 dims_end=0x76d08d84 cap=0x76d08d84 [1,1,1,64,32]
+[VENUS] core::oram_malloc(size=2048)
+[VENUS] core::oram_malloc returning 0x76d00000
+[VENUS] Created tensor: 2048 bytes (aligned=2048), dtype=6, fmt=1, shape=[1,1,1,64,32]
+[VENUS] build_tensors: create_tensor returned 0x76d299b0 for '__FormatConvert__0'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76d299b0, this=0x76d08b60)
+[VENUS] build_tensors: [55] name='layer_34_QuantizeBatchNorm' is_input=0 is_output=0
+[VENUS] build_tensors: calling create_tensor for 'layer_34_QuantizeBatchNorm'
+[VENUS] MagikModelBase::create_tensor(name=layer_34_QuantizeBatchNorm)
+[VENUS]   dtype_str="UINT8", layout="NDHWC32", is_input=0, is_output=0
+[VENUS]   shape dims=[1,1,1,64,32]
+[VENUS] TensorX::TensorX default ctor this=0x76cfe410 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76cfe410, old_ndims=0, new_ndims=5)
+[VENUS] TensorX::set_shape: dims_begin=0x76d08e70 dims_end=0x76d08e84 cap=0x76d08e84 [1,1,1,64,32]
+[VENUS] core::oram_malloc(size=2048)
+[VENUS] core::oram_malloc returning 0x76cfd000
+[VENUS] Created tensor: 2048 bytes (aligned=2048), dtype=6, fmt=1, shape=[1,1,1,64,32]
+[VENUS] build_tensors: create_tensor returned 0x76cfe410 for 'layer_34_QuantizeBatchNorm'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76cfe410, this=0x76cfe0b0)
+[VENUS] build_tensors: [56] name='layer_32_QuantizeFeature' is_input=0 is_output=0
+[VENUS] build_tensors: calling create_tensor for 'layer_32_QuantizeFeature'
+[VENUS] MagikModelBase::create_tensor(name=layer_32_QuantizeFeature)
+[VENUS]   dtype_str="UINT8", layout="NDHWC32", is_input=0, is_output=0
+[VENUS]   shape dims=[1,1,1,64,32]
+[VENUS] TensorX::TensorX default ctor this=0x76cfe460 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76cfe460, old_ndims=0, new_ndims=5)
+[VENUS] TensorX::set_shape: dims_begin=0x76d08f70 dims_end=0x76d08f84 cap=0x76d08f84 [1,1,1,64,32]
+[VENUS] core::oram_malloc(size=2048)
+[VENUS] core::oram_malloc returning 0x76cfc000
+[VENUS] Created tensor: 2048 bytes (aligned=2048), dtype=6, fmt=1, shape=[1,1,1,64,32]
+[VENUS] build_tensors: create_tensor returned 0x76cfe460 for 'layer_32_QuantizeFeature'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76cfe460, this=0x76cfe1a0)
+[VENUS] build_tensors: [57] name='layer_28_QuantizeFeature' is_input=0 is_output=0
+[VENUS] build_tensors: calling create_tensor for 'layer_28_QuantizeFeature'
+[VENUS] MagikModelBase::create_tensor(name=layer_28_QuantizeFeature)
+[VENUS]   dtype_str="UINT8", layout="NDHWC32", is_input=0, is_output=0
+[VENUS]   shape dims=[1,4,1,64,32]
+[VENUS] TensorX::TensorX default ctor this=0x76cfe4b0 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76cfe4b0, old_ndims=0, new_ndims=5)
+[VENUS] TensorX::set_shape: dims_begin=0x76d08e50 dims_end=0x76d08e64 cap=0x76d08e64 [1,4,1,64,32]
+[VENUS] core::oram_malloc(size=8192)
+[VENUS] core::oram_malloc returning 0x76cfa000
+[VENUS] Created tensor: 8192 bytes (aligned=8192), dtype=6, fmt=1, shape=[1,4,1,64,32]
+[VENUS] build_tensors: create_tensor returned 0x76cfe4b0 for 'layer_28_QuantizeFeature'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76cfe4b0, this=0x76cfe290)
+[VENUS] build_tensors: [58] name='layer_26_QuantizeFeature' is_input=0 is_output=0
+[VENUS] build_tensors: calling create_tensor for 'layer_26_QuantizeFeature'
+[VENUS] MagikModelBase::create_tensor(name=layer_26_QuantizeFeature)
+[VENUS]   dtype_str="UINT8", layout="NDHWC32", is_input=0, is_output=0
+[VENUS]   shape dims=[1,1,1,64,32]
+[VENUS] TensorX::TensorX default ctor this=0x76cfe500 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76cfe500, old_ndims=0, new_ndims=5)
+[VENUS] TensorX::set_shape: dims_begin=0x76cfe860 dims_end=0x76cfe874 cap=0x76cfe874 [1,1,1,64,32]
+[VENUS] core::oram_malloc(size=2048)
+[VENUS] core::oram_malloc returning 0x76cf9000
+[VENUS] Created tensor: 2048 bytes (aligned=2048), dtype=6, fmt=1, shape=[1,1,1,64,32]
+[VENUS] build_tensors: create_tensor returned 0x76cfe500 for 'layer_26_QuantizeFeature'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76cfe500, this=0x76cfe380)
+[VENUS] build_tensors: [59] name='layer_22_QuantizeFeature' is_input=0 is_output=0
+[VENUS] build_tensors: calling create_tensor for 'layer_22_QuantizeFeature'
+[VENUS] MagikModelBase::create_tensor(name=layer_22_QuantizeFeature)
+[VENUS]   dtype_str="UINT8", layout="NDHWC32", is_input=0, is_output=0
+[VENUS]   shape dims=[1,4,1,64,32]
+[VENUS] TensorX::TensorX default ctor this=0x76cfe550 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76cfe550, old_ndims=0, new_ndims=5)
+[VENUS] TensorX::set_shape: dims_begin=0x76cfe960 dims_end=0x76cfe974 cap=0x76cfe974 [1,4,1,64,32]
+[VENUS] core::oram_malloc(size=8192)
+[VENUS] core::oram_malloc returning 0x76cf7000
+[VENUS] Created tensor: 8192 bytes (aligned=8192), dtype=6, fmt=1, shape=[1,4,1,64,32]
+[VENUS] build_tensors: create_tensor returned 0x76cfe550 for 'layer_22_QuantizeFeature'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76cfe550, this=0x76cfec80)
+[VENUS] build_tensors: [60] name='layer_20_QuantizeFeature' is_input=0 is_output=0
+[VENUS] build_tensors: calling create_tensor for 'layer_20_QuantizeFeature'
+[VENUS] MagikModelBase::create_tensor(name=layer_20_QuantizeFeature)
+[VENUS]   dtype_str="UINT8", layout="NDHWC32", is_input=0, is_output=0
+[VENUS]   shape dims=[1,1,1,64,32]
+[VENUS] TensorX::TensorX default ctor this=0x76cfe5a0 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76cfe5a0, old_ndims=0, new_ndims=5)
+[VENUS] TensorX::set_shape: dims_begin=0x76cfea60 dims_end=0x76cfea74 cap=0x76cfea74 [1,1,1,64,32]
+[VENUS] core::oram_malloc(size=2048)
+[VENUS] core::oram_malloc returning 0x76cf6000
+[VENUS] Created tensor: 2048 bytes (aligned=2048), dtype=6, fmt=1, shape=[1,1,1,64,32]
+[VENUS] build_tensors: create_tensor returned 0x76cfe5a0 for 'layer_20_QuantizeFeature'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76cfe5a0, this=0x76cfed70)
+[VENUS] build_tensors: [61] name='layer_16_QuantizeFeature' is_input=0 is_output=0
+[VENUS] build_tensors: calling create_tensor for 'layer_16_QuantizeFeature'
+[VENUS] MagikModelBase::create_tensor(name=layer_16_QuantizeFeature)
+[VENUS]   dtype_str="UINT8", layout="NDHWC32", is_input=0, is_output=0
+[VENUS]   shape dims=[1,4,1,64,32]
+[VENUS] TensorX::TensorX default ctor this=0x76cfe5f0 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76cfe5f0, old_ndims=0, new_ndims=5)
+[VENUS] TensorX::set_shape: dims_begin=0x76cfeb60 dims_end=0x76cfeb74 cap=0x76cfeb74 [1,4,1,64,32]
+[VENUS] core::oram_malloc(size=8192)
+[VENUS] core::oram_malloc returning 0x76cf4000
+[VENUS] Created tensor: 8192 bytes (aligned=8192), dtype=6, fmt=1, shape=[1,4,1,64,32]
+[VENUS] build_tensors: create_tensor returned 0x76cfe5f0 for 'layer_16_QuantizeFeature'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76cfe5f0, this=0x76cfee60)
+[VENUS] build_tensors: [62] name='layer_14_QuantizeFeature' is_input=0 is_output=0
+[VENUS] build_tensors: calling create_tensor for 'layer_14_QuantizeFeature'
+[VENUS] MagikModelBase::create_tensor(name=layer_14_QuantizeFeature)
+[VENUS]   dtype_str="UINT8", layout="NDHWC32", is_input=0, is_output=0
+[VENUS]   shape dims=[1,1,1,64,32]
+[VENUS] TensorX::TensorX default ctor this=0x76cfe640 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76cfe640, old_ndims=0, new_ndims=5)
+[VENUS] TensorX::set_shape: dims_begin=0x76cfea20 dims_end=0x76cfea34 cap=0x76cfea34 [1,1,1,64,32]
+[VENUS] core::oram_malloc(size=2048)
+[VENUS] core::oram_malloc returning 0x76cf3000
+[VENUS] Created tensor: 2048 bytes (aligned=2048), dtype=6, fmt=1, shape=[1,1,1,64,32]
+[VENUS] build_tensors: create_tensor returned 0x76cfe640 for 'layer_14_QuantizeFeature'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76cfe640, this=0x76cfef50)
+[VENUS] build_tensors: [63] name='layer_10_QuantizeFeature' is_input=0 is_output=0
+[VENUS] build_tensors: calling create_tensor for 'layer_10_QuantizeFeature'
+[VENUS] MagikModelBase::create_tensor(name=layer_10_QuantizeFeature)
+[VENUS]   dtype_str="UINT8", layout="NDHWC32", is_input=0, is_output=0
+[VENUS]   shape dims=[1,4,1,64,32]
+[VENUS] TensorX::TensorX default ctor this=0x76cfe690 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76cfe690, old_ndims=0, new_ndims=5)
+[VENUS] TensorX::set_shape: dims_begin=0x76cff410 dims_end=0x76cff424 cap=0x76cff424 [1,4,1,64,32]
+[VENUS] core::oram_malloc(size=8192)
+[VENUS] core::oram_malloc returning 0x76cf1000
+[VENUS] Created tensor: 8192 bytes (aligned=8192), dtype=6, fmt=1, shape=[1,4,1,64,32]
+[VENUS] build_tensors: create_tensor returned 0x76cfe690 for 'layer_10_QuantizeFeature'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76cfe690, this=0x76cff070)
+[VENUS] build_tensors: [64] name='x.39' is_input=0 is_output=0
+[VENUS] build_tensors: calling create_tensor for 'x.39'
+[VENUS] MagikModelBase::create_tensor(name=x.39)
+[VENUS]   dtype_str="UINT8", layout="NDHWC32", is_input=0, is_output=0
+[VENUS]   shape dims=[1,4,1,128,32]
+[VENUS] TensorX::TensorX default ctor this=0x76cfe6e0 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76cfe6e0, old_ndims=0, new_ndims=5)
+[VENUS] TensorX::set_shape: dims_begin=0x76cff4f0 dims_end=0x76cff504 cap=0x76cff504 [1,4,1,128,32]
+[VENUS] core::oram_malloc(size=16384)
+[VENUS] core::oram_malloc returning 0x76ced000
+[VENUS] Created tensor: 16384 bytes (aligned=16384), dtype=6, fmt=1, shape=[1,4,1,128,32]
+[VENUS] build_tensors: create_tensor returned 0x76cfe6e0 for 'x.39'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76cfe6e0, this=0x76cff160)
+[VENUS] build_tensors: [65] name='layer_8_QuantizeFeature' is_input=0 is_output=0
+[VENUS] build_tensors: calling create_tensor for 'layer_8_QuantizeFeature'
+[VENUS] MagikModelBase::create_tensor(name=layer_8_QuantizeFeature)
+[VENUS]   dtype_str="UINT8", layout="NDHWC32", is_input=0, is_output=0
+[VENUS]   shape dims=[1,1,1,128,32]
+[VENUS] TensorX::TensorX default ctor this=0x76cfe730 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76cfe730, old_ndims=0, new_ndims=5)
+[VENUS] TensorX::set_shape: dims_begin=0x76cff570 dims_end=0x76cff584 cap=0x76cff584 [1,1,1,128,32]
+[VENUS] core::oram_malloc(size=4096)
+[VENUS] core::oram_malloc returning 0x76ceb000
+[VENUS] Created tensor: 4096 bytes (aligned=4096), dtype=6, fmt=1, shape=[1,1,1,128,32]
+[VENUS] build_tensors: create_tensor returned 0x76cfe730 for 'layer_8_QuantizeFeature'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76cfe730, this=0x76cff250)
+[VENUS] build_tensors: [66] name='layer_4_QuantizeFeature' is_input=0 is_output=0
+[VENUS] build_tensors: calling create_tensor for 'layer_4_QuantizeFeature'
+[VENUS] MagikModelBase::create_tensor(name=layer_4_QuantizeFeature)
+[VENUS]   dtype_str="UINT8", layout="NDHWC32", is_input=0, is_output=0
+[VENUS]   shape dims=[1,4,1,128,32]
+[VENUS] TensorX::TensorX default ctor this=0x76cfe780 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76cfe780, old_ndims=0, new_ndims=5)
+[VENUS] TensorX::set_shape: dims_begin=0x76cff670 dims_end=0x76cff684 cap=0x76cff684 [1,4,1,128,32]
+[VENUS] core::oram_malloc(size=16384)
+[VENUS] core::oram_malloc returning 0x76ce7000
+[VENUS] Created tensor: 16384 bytes (aligned=16384), dtype=6, fmt=1, shape=[1,4,1,128,32]
+[VENUS] build_tensors: create_tensor returned 0x76cfe780 for 'layer_4_QuantizeFeature'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76cfe780, this=0x76cff340)
+[VENUS] build_tensors: [67] name='x.43' is_input=0 is_output=0
+[VENUS] build_tensors: calling create_tensor for 'x.43'
+[VENUS] MagikModelBase::create_tensor(name=x.43)
+[VENUS]   dtype_str="UINT8", layout="NDHWC32", is_input=0, is_output=0
+[VENUS]   shape dims=[1,4,1,256,32]
+[VENUS] TensorX::TensorX default ctor this=0x76cffbb0 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76cffbb0, old_ndims=0, new_ndims=5)
+[VENUS] TensorX::set_shape: dims_begin=0x76cff750 dims_end=0x76cff764 cap=0x76cff764 [1,4,1,256,32]
+[VENUS] core::oram_malloc(size=32768)
+[VENUS] core::oram_malloc returning 0x76cdf000
+[VENUS] Created tensor: 32768 bytes (aligned=32768), dtype=6, fmt=1, shape=[1,4,1,256,32]
+[VENUS] build_tensors: create_tensor returned 0x76cffbb0 for 'x.43'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76cffbb0, this=0x76cff850)
+[VENUS] build_tensors: [68] name='layer_2_QuantizeFeature' is_input=0 is_output=0
+[VENUS] build_tensors: calling create_tensor for 'layer_2_QuantizeFeature'
+[VENUS] MagikModelBase::create_tensor(name=layer_2_QuantizeFeature)
+[VENUS]   dtype_str="UINT8", layout="NDHWC32", is_input=0, is_output=0
+[VENUS]   shape dims=[1,1,1,256,32]
+[VENUS] TensorX::TensorX default ctor this=0x76cffc00 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76cffc00, old_ndims=0, new_ndims=5)
+[VENUS] TensorX::set_shape: dims_begin=0x76cff3f0 dims_end=0x76cff404 cap=0x76cff404 [1,1,1,256,32]
+[VENUS] core::oram_malloc(size=8192)
+[VENUS] core::oram_malloc returning 0x76cdd000
+[VENUS] Created tensor: 8192 bytes (aligned=8192), dtype=6, fmt=1, shape=[1,1,1,256,32]
+[VENUS] build_tensors: create_tensor returned 0x76cffc00 for 'layer_2_QuantizeFeature'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76cffc00, this=0x76cff940)
+[VENUS] build_tensors: [69] name='onnx__Sigmoid_521_last_layer' is_input=0 is_output=1
+[VENUS] build_tensors: calling create_tensor for 'onnx__Sigmoid_521_last_layer'
+[VENUS] MagikModelBase::create_tensor(name=onnx__Sigmoid_521_last_layer)
+[VENUS]   dtype_str="FP32", layout="NHWC", is_input=0, is_output=1
+[VENUS]   shape dims=[1,1,256,2]
+[VENUS] TensorX::TensorX default ctor this=0x76cffc50 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76cffc50, old_ndims=0, new_ndims=4)
+[VENUS] TensorX::set_shape: dims_begin=0x76cff3d0 dims_end=0x76cff3e0 cap=0x76cff3e0 [1,1,256,2]
+[VENUS] core::oram_malloc(size=2048)
+[VENUS] core::oram_malloc returning 0x76cdc000
+[VENUS] Created tensor: 2048 bytes (aligned=2048), dtype=1, fmt=1, shape=[1,1,256,2]
+[VENUS] build_tensors: create_tensor returned 0x76cffc50 for 'onnx__Sigmoid_521_last_layer'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76cffc50, this=0x76cffa60)
+[VENUS] build_tensors: marking 'onnx__Sigmoid_521_last_layer' as model OUTPUT (index=6)
+[VENUS] build_tensors: [70] name='499_last_layer' is_input=0 is_output=1
+[VENUS] build_tensors: calling create_tensor for '499_last_layer'
+[VENUS] MagikModelBase::create_tensor(name=499_last_layer)
+[VENUS]   dtype_str="UINT8", layout="NHWC", is_input=0, is_output=1
+[VENUS]   shape dims=[1,1,128,32]
+[VENUS] TensorX::TensorX default ctor this=0x76cffca0 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76cffca0, old_ndims=0, new_ndims=4)
+[VENUS] TensorX::set_shape: dims_begin=0x76cda410 dims_end=0x76cda420 cap=0x76cda420 [1,1,128,32]
+[VENUS] core::oram_malloc(size=4096)
+[VENUS] core::oram_malloc returning 0x76cd9000
+[VENUS] Created tensor: 4096 bytes (aligned=4096), dtype=6, fmt=1, shape=[1,1,128,32]
+[VENUS] build_tensors: create_tensor returned 0x76cffca0 for '499_last_layer'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76cffca0, this=0x76cda080)
+[VENUS] build_tensors: marking '499_last_layer' as model OUTPUT (index=7)
+[VENUS] build_tensors: [71] name='480_last_layer' is_input=0 is_output=1
+[VENUS] build_tensors: calling create_tensor for '480_last_layer'
+[VENUS] MagikModelBase::create_tensor(name=480_last_layer)
+[VENUS]   dtype_str="UINT8", layout="NHWC", is_input=0, is_output=1
+[VENUS]   shape dims=[1,1,64,32]
+[VENUS] TensorX::TensorX default ctor this=0x76cffcf0 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76cffcf0, old_ndims=0, new_ndims=4)
+[VENUS] TensorX::set_shape: dims_begin=0x76cda470 dims_end=0x76cda480 cap=0x76cda480 [1,1,64,32]
+[VENUS] core::oram_malloc(size=2048)
+[VENUS] core::oram_malloc returning 0x76cd8000
+[VENUS] Created tensor: 2048 bytes (aligned=2048), dtype=6, fmt=1, shape=[1,1,64,32]
+[VENUS] build_tensors: create_tensor returned 0x76cffcf0 for '480_last_layer'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76cffcf0, this=0x76cda170)
+[VENUS] build_tensors: marking '480_last_layer' as model OUTPUT (index=8)
+[VENUS] build_tensors: [72] name='463_last_layer' is_input=0 is_output=1
+[VENUS] build_tensors: calling create_tensor for '463_last_layer'
+[VENUS] MagikModelBase::create_tensor(name=463_last_layer)
+[VENUS]   dtype_str="UINT8", layout="NHWC", is_input=0, is_output=1
+[VENUS]   shape dims=[1,1,64,32]
+[VENUS] TensorX::TensorX default ctor this=0x76cffd90 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76cffd90, old_ndims=0, new_ndims=4)
+[VENUS] TensorX::set_shape: dims_begin=0x76cda4d0 dims_end=0x76cda4e0 cap=0x76cda4e0 [1,1,64,32]
+[VENUS] core::oram_malloc(size=2048)
+[VENUS] core::oram_malloc returning 0x76cd7000
+[VENUS] Created tensor: 2048 bytes (aligned=2048), dtype=6, fmt=1, shape=[1,1,64,32]
+[VENUS] build_tensors: create_tensor returned 0x76cffd90 for '463_last_layer'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76cffd90, this=0x76cda260)
+[VENUS] build_tensors: marking '463_last_layer' as model OUTPUT (index=9)
+[VENUS] build_tensors: [73] name='446_last_layer' is_input=0 is_output=1
+[VENUS] build_tensors: calling create_tensor for '446_last_layer'
+[VENUS] MagikModelBase::create_tensor(name=446_last_layer)
+[VENUS]   dtype_str="UINT8", layout="NHWC", is_input=0, is_output=1
+[VENUS]   shape dims=[1,1,64,32]
+[VENUS] TensorX::TensorX default ctor this=0x76cffde0 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76cffde0, old_ndims=0, new_ndims=4)
+[VENUS] TensorX::set_shape: dims_begin=0x76cda530 dims_end=0x76cda540 cap=0x76cda540 [1,1,64,32]
+[VENUS] core::oram_malloc(size=2048)
+[VENUS] core::oram_malloc returning 0x76cd6000
+[VENUS] Created tensor: 2048 bytes (aligned=2048), dtype=6, fmt=1, shape=[1,1,64,32]
+[VENUS] build_tensors: create_tensor returned 0x76cffde0 for '446_last_layer'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76cffde0, this=0x76cda350)
+[VENUS] build_tensors: marking '446_last_layer' as model OUTPUT (index=10)
+[VENUS] build_tensors: [74] name='429_last_layer' is_input=0 is_output=1
+[VENUS] build_tensors: calling create_tensor for '429_last_layer'
+[VENUS] MagikModelBase::create_tensor(name=429_last_layer)
+[VENUS]   dtype_str="UINT8", layout="NHWC", is_input=0, is_output=1
+[VENUS]   shape dims=[1,1,64,32]
+[VENUS] TensorX::TensorX default ctor this=0x76cffe30 (align=1, dtype=7, format=1)
+[VENUS] TensorX::set_shape(this=0x76cffe30, old_ndims=0, new_ndims=4)
+[VENUS] TensorX::set_shape: dims_begin=0x76cda590 dims_end=0x76cda5a0 cap=0x76cda5a0 [1,1,64,32]
+[VENUS] core::oram_malloc(size=2048)
+[VENUS] core::oram_malloc returning 0x76cd5000
+[VENUS] Created tensor: 2048 bytes (aligned=2048), dtype=6, fmt=1, shape=[1,1,64,32]
+[VENUS] build_tensors: create_tensor returned 0x76cffe30 for '429_last_layer'
+[VENUS] TensorXWrapper::TensorXWrapper(tx=0x76cffe30, this=0x76cda830)
+[VENUS] build_tensors: marking '429_last_layer' as model OUTPUT (index=11)
+[VENUS] build_tensors: built 75 tensors (config=0x77549e00, config_tensors_[config].size()=75, g_tensor_names[config].size()=75)
+[VENUS] build_tensors: config->tensors_.size()=75 (should be 75)
+[VENUS] build_tensors: config->input_tensors_.size()=75, config->output_tensors_.size()=75
+[VENUS] build_tensors: SUMMARY - inputs_.size()=12, outputs_.size()=12
+[VENUS] build_tensors: g_tensor_names has 1 configs total
+[VENUS] build_tensors: g_tensor_names[config]['276_last_layer'] = 0x76d15d40
+[VENUS] build_tensors: g_tensor_names[config]['288_last_layer'] = 0x76d15c50
+[VENUS] build_tensors: g_tensor_names[config]['300_last_layer'] = 0x76d15b30
+[VENUS] build_tensors: g_tensor_names[config]['312_last_layer'] = 0x76d15a40
+[VENUS] build_tensors: g_tensor_names[config]['429_last_layer'] = 0x76cda830
+
+
+
+
+
+
+
+[VENUS] scan_param_blob_for_layer_headers_once: recorded 0 candidate headers, g_parsed_layers=0
+[VENUS] build_layer_io_map_from_ddr: built 0 entries (g_parsed_layers=0)
+[VENUS] format_convert_param_init shim (raw) called
+  ra0=0x76d56644 (obj=/opt/AEC_T41_16K_NS_OUT_UC.mgk, symbol=_ZN17DerivedMagikModelC2ExxPvS0_S0_N5magik5venus22ModelMemoryInfoManager12MemAllocModeENS2_14MagikModelBase10ModuleModeE+0x4450)
+[VENUS] format_convert_param_init shim (raw) called
+  ra0=0x76d56a9c (obj=/opt/AEC_T41_16K_NS_OUT_UC.mgk, symbol=_ZN17DerivedMagikModelC2ExxPvS0_S0_N5magik5venus22ModelMemoryInfoManager12MemAllocModeENS2_14MagikModelBase10ModuleModeE+0x48a8)
+[VENUS] format_convert_param_init shim (raw) called
+  ra0=0x76d56ef4 (obj=/opt/AEC_T41_16K_NS_OUT_UC.mgk, symbol=_ZN17DerivedMagikModelC2ExxPvS0_S0_N5magik5venus22ModelMemoryInfoManager12MemAllocModeENS2_14MagikModelBase10ModuleModeE+0x4d00)
+[VENUS] format_convert_param_init shim (raw) called
+  ra0=0x76d5734c (obj=/opt/AEC_T41_16K_NS_OUT_UC.mgk, symbol=_ZN17DerivedMagikModelC2ExxPvS0_S0_N5magik5venus22ModelMemoryInfoManager12MemAllocModeENS2_14MagikModelBase10ModuleModeE+0x5158)
+[VENUS] format_convert_param_init shim (raw) called
+  ra0=0x76d577a0 (obj=/opt/AEC_T41_16K_NS_OUT_UC.mgk, symbol=_ZN17DerivedMagikModelC2ExxPvS0_S0_N5magik5venus22ModelMemoryInfoManager12MemAllocModeENS2_14MagikModelBase10ModuleModeE+0x55ac)
+[VENUS] format_convert_param_init shim (raw) called
+  ra0=0x76d57c00 (obj=/opt/AEC_T41_16K_NS_OUT_UC.mgk, symbol=_ZN17DerivedMagikModelC2ExxPvS0_S0_N5magik5venus22ModelMemoryInfoManager12MemAllocModeENS2_14MagikModelBase10ModuleModeE+0x5a0c)
+[VENUS] format_convert_param_init shim (raw) called
+  ra0=0x76d58058 (obj=/opt/AEC_T41_16K_NS_OUT_UC.mgk, symbol=_ZN17DerivedMagikModelC2ExxPvS0_S0_N5magik5venus22ModelMemoryInfoManager12MemAllocModeENS2_14MagikModelBase10ModuleModeE+0x5e64)
+[VENUS] format_convert_param_init shim (raw) called
+  ra0=0x76d584a8 (obj=/opt/AEC_T41_16K_NS_OUT_UC.mgk, symbol=_ZN17DerivedMagikModelC2ExxPvS0_S0_N5magik5venus22ModelMemoryInfoManager12MemAllocModeENS2_14MagikModelBase10ModuleModeE+0x62b4)
+[VENUS] format_convert_param_init shim (raw) called
+  ra0=0x76d58978 (obj=/opt/AEC_T41_16K_NS_OUT_UC.mgk, symbol=_ZN17DerivedMagikModelC2ExxPvS0_S0_N5magik5venus22ModelMemoryInfoManager12MemAllocModeENS2_14MagikModelBase10ModuleModeE+0x6784)
+[VENUS] format_convert_param_init shim (raw) called
+  ra0=0x76d58dcc (obj=/opt/AEC_T41_16K_NS_OUT_UC.mgk, symbol=_ZN17DerivedMagikModelC2ExxPvS0_S0_N5magik5venus22ModelMemoryInfoManager12MemAllocModeENS2_14MagikModelBase10ModuleModeE+0x6bd8)
+[VENUS] bn_scale_int8_param_init shim (raw) called
+  ra0=0x76d5929c (obj=/opt/AEC_T41_16K_NS_OUT_UC.mgk, symbol=_ZN17DerivedMagikModelC2ExxPvS0_S0_N5magik5venus22ModelMemoryInfoManager12MemAllocModeENS2_14MagikModelBase10ModuleModeE+0x70a8)
+[VENUS] format_convert_param_init shim (raw) called
+  ra0=0x76d59714 (obj=/opt/AEC_T41_16K_NS_OUT_UC.mgk, symbol=_ZN17DerivedMagikModelC2ExxPvS0_S0_N5magik5venus22ModelMemoryInfoManager12MemAllocModeENS2_14MagikModelBase10ModuleModeE+0x7520)
+[VENUS] conv2d_int8_param_init shim (raw) called
+  ra0=0x76d598b8 (obj=/opt/AEC_T41_16K_NS_OUT_UC.mgk, symbol=_ZN17DerivedMagikModelC2ExxPvS0_S0_N5magik5venus22ModelMemoryInfoManager12MemAllocModeENS2_14MagikModelBase10ModuleModeE+0x76c4)
+[VENUS] conv2d_int8_param_init shim (raw) called
+  ra0=0x76d59928 (obj=/opt/AEC_T41_16K_NS_OUT_UC.mgk, symbol=_ZN17DerivedMagikModelC2ExxPvS0_S0_N5magik5venus22ModelMemoryInfoManager12MemAllocModeENS2_14MagikModelBase10ModuleModeE+0x7734)
+[VENUS] conv2d_int8_param_init shim (raw) called
+  ra0=0x76d59998 (obj=/opt/AEC_T41_16K_NS_OUT_UC.mgk, symbol=_ZN17DerivedMagikModelC2ExxPvS0_S0_N5magik5venus22ModelMemoryInfoManager12MemAllocModeENS2_14MagikModelBase10ModuleModeE+0x77a4)
+[VENUS] conv2d_int8_param_init shim (raw) called
+  ra0=0x76d59a08 (obj=/opt/AEC_T41_16K_NS_OUT_UC.mgk, symbol=_ZN17DerivedMagikModelC2ExxPvS0_S0_N5magik5venus22ModelMemoryInfoManager12MemAllocModeENS2_14MagikModelBase10ModuleModeE+0x7814)
+[VENUS] conv2d_int8_param_init shim (raw) called
+  ra0=0x76d59a78 (obj=/opt/AEC_T41_16K_NS_OUT_UC.mgk, symbol=_ZN17DerivedMagikModelC2ExxPvS0_S0_N5magik5venus22ModelMemoryInfoManager12MemAllocModeENS2_14MagikModelBase10ModuleModeE+0x7884)
+[VENUS] format_convert_param_init shim (raw) called
+  ra0=0x76d59da8 (obj=/opt/AEC_T41_16K_NS_OUT_UC.mgk, symbol=_ZN17DerivedMagikModelC2ExxPvS0_S0_N5magik5venus22ModelMemoryInfoManager12MemAllocModeENS2_14MagikModelBase10ModuleModeE+0x7bb4)
+[VENUS] reshape_param_init shim (raw) called
+  ra0=0x76d5a20c (obj=/opt/AEC_T41_16K_NS_OUT_UC.mgk, symbol=_ZN17DerivedMagikModelC2ExxPvS0_S0_N5magik5venus22ModelMemoryInfoManager12MemAllocModeENS2_14MagikModelBase10ModuleModeE+0x8018)
+[VENUS] gru_param_init shim (raw) called
+  ra0=0x76d5a748 (obj=/opt/AEC_T41_16K_NS_OUT_UC.mgk, symbol=_ZN17DerivedMagikModelC2ExxPvS0_S0_N5magik5venus22ModelMemoryInfoManager12MemAllocModeENS2_14MagikModelBase10ModuleModeE+0x8554)
+[VENUS] reshape_param_init shim (raw) called
+  ra0=0x76d5ac24 (obj=/opt/AEC_T41_16K_NS_OUT_UC.mgk, symbol=_ZN17DerivedMagikModelC2ExxPvS0_S0_N5magik5venus22ModelMemoryInfoManager12MemAllocModeENS2_14MagikModelBase10ModuleModeE+0x8a30)
+[VENUS] format_convert_param_init shim (raw) called
+  ra0=0x76d5b084 (obj=/opt/AEC_T41_16K_NS_OUT_UC.mgk, symbol=_ZN17DerivedMagikModelC2ExxPvS0_S0_N5magik5venus22ModelMemoryInfoManager12MemAllocModeENS2_14MagikModelBase10ModuleModeE+0x8e90)
+[VENUS] conv2d_int8_param_init shim (raw) called
+  ra0=0x76d5b228 (obj=/opt/AEC_T41_16K_NS_OUT_UC.mgk, symbol=_ZN17DerivedMagikModelC2ExxPvS0_S0_N5magik5venus22ModelMemoryInfoManager12MemAllocModeENS2_14MagikModelBase10ModuleModeE+0x9034)
+[VENUS] format_convert_param_init shim (raw) called
+  ra0=0x76d5b550 (obj=/opt/AEC_T41_16K_NS_OUT_UC.mgk, symbol=_ZN17DerivedMagikModelC2ExxPvS0_S0_N5magik5venus22ModelMemoryInfoManager12MemAllocModeENS2_14MagikModelBase10ModuleModeE+0x935c)
+[VENUS] reshape_param_init shim (raw) called
+  ra0=0x76d5b9b8 (obj=/opt/AEC_T41_16K_NS_OUT_UC.mgk, symbol=_ZN17DerivedMagikModelC2ExxPvS0_S0_N5magik5venus22ModelMemoryInfoManager12MemAllocModeENS2_14MagikModelBase10ModuleModeE+0x97c4)
+[VENUS] format_convert_param_init shim (raw) called
+  ra0=0x76d5be18 (obj=/opt/AEC_T41_16K_NS_OUT_UC.mgk, symbol=_ZN17DerivedMagikModelC2ExxPvS0_S0_N5magik5venus22ModelMemoryInfoManager12MemAllocModeENS2_14MagikModelBase10ModuleModeE+0x9c24)
+[VENUS] bn_scale_int8_param_init shim (raw) called
+  ra0=0x76d5c2dc (obj=/opt/AEC_T41_16K_NS_OUT_UC.mgk, symbol=_ZN17DerivedMagikModelC2ExxPvS0_S0_N5magik5venus22ModelMemoryInfoManager12MemAllocModeENS2_14MagikModelBase10ModuleModeE+0xa0e8)
+[VENUS] memcpy guard: blocked memcpy(0x2358 -> 0x7ffd7248, n=4) src_ok=0 dest_ok=1
+  ra0=0x7751b1f4 (obj=/opt/libnna.so, base=0x77509000, symbol=_Z12get_string_tRNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEPKvRi+0x10c)
+[VENUS] get_string_t override
+  index=4 len=0 param=0x2358
+  ra0=0x76d65f28 (obj=/opt/AEC_T41_16K_NS_OUT_UC.mgk, symbol=_Z17read_common_paramRNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEERSt6vectorIS4_SaIS4_EES9_RS6_IiSaIiEES9_S9_RiS9_S5_PKvSD_+0x74)
+  param[0..15]=00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+[VENUS] memcpy guard: blocked memcpy(0x235c -> 0x7ffd7248, n=4) src_ok=0 dest_ok=1
+  ra0=0x7751d8e0 (obj=/opt/libnna.so, base=0x77509000, symbol=_Z19get_string_vector_tRSt6vectorINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESaIS5_EEPKvRi+0x10c)
+[VENUS] get_string_vector_t override
+  vec_size_before=0 index=8 count=0 param=0x2358
+  ra0=0x76d65f44 (obj=/opt/AEC_T41_16K_NS_OUT_UC.mgk, symbol=_Z17read_common_paramRNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEERSt6vectorIS4_SaIS4_EES9_RS6_IiSaIiEES9_S9_RiS9_S5_PKvSD_+0x90)
+  param_ddr_base=0x76e6b000 in_ddr=0 ddr_off=-1
+  param[0..15]=00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+[VENUS] memcpy guard: blocked memcpy(0x2360 -> 0x7ffd7248, n=4) src_ok=0 dest_ok=1
+  ra0=0x7751d8e0 (obj=/opt/libnna.so, base=0x77509000, symbol=_Z19get_string_vector_tRSt6vectorINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESaIS5_EEPKvRi+0x10c)
+[VENUS] get_string_vector_t override
+  vec_size_before=0 index=12 count=0 param=0x2358
+  ra0=0x76d65f5c (obj=/opt/AEC_T41_16K_NS_OUT_UC.mgk, symbol=_Z17read_common_paramRNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEERSt6vectorIS4_SaIS4_EES9_RS6_IiSaIiEES9_S9_RiS9_S5_PKvSD_+0xa8)
+  param_ddr_base=0x76e6b000 in_ddr=0 ddr_off=-1
+  param[0..15]=00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+[VENUS] memcpy guard: blocked memcpy(0x2364 -> 0x7ffd7280, n=4) src_ok=0 dest_ok=1
+  ra0=0x76d721d4 (obj=/opt/AEC_T41_16K_NS_OUT_UC.mgk, base=0x76d43000, symbol=?+0x0)
+[VENUS] memcpy guard: blocked memcpy(0x2368 -> 0x7ffd7248, n=4) src_ok=0 dest_ok=1
+  ra0=0x7751d8e0 (obj=/opt/libnna.so, base=0x77509000, symbol=_Z19get_string_vector_tRSt6vectorINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESaIS5_EEPKvRi+0x10c)
+[VENUS] get_string_vector_t override
+  vec_size_before=0 index=20 count=0 param=0x2358
+  ra0=0x76d65f8c (obj=/opt/AEC_T41_16K_NS_OUT_UC.mgk, symbol=_Z17read_common_paramRNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEERSt6vectorIS4_SaIS4_EES9_RS6_IiSaIiEES9_S9_RiS9_S5_PKvSD_+0xd8)
+  param_ddr_base=0x76e6b000 in_ddr=0 ddr_off=-1
+  param[0..15]=00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+[VENUS] memcpy guard: blocked memcpy(0x236c -> 0x7ffd7248, n=4) src_ok=0 dest_ok=1
+  ra0=0x7751d8e0 (obj=/opt/libnna.so, base=0x77509000, symbol=_Z19get_string_vector_tRSt6vectorINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESaIS5_EEPKvRi+0x10c)
+[VENUS] get_string_vector_t override
+  vec_size_before=0 index=24 count=0 param=0x2358
+  ra0=0x76d65fa4 (obj=/opt/AEC_T41_16K_NS_OUT_UC.mgk, symbol=_Z17read_common_paramRNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEERSt6vectorIS4_SaIS4_EES9_RS6_IiSaIiEES9_S9_RiS9_S5_PKvSD_+0xf0)
+  param_ddr_base=0x76e6b000 in_ddr=0 ddr_off=-1
+  param[0..15]=00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+[VENUS] memcpy guard: blocked memcpy(0x2370 -> 0x7ffd7248, n=4) src_ok=0 dest_ok=1
+  ra0=0x7751d8e0 (obj=/opt/libnna.so, base=0x77509000, symbol=_Z19get_string_vector_tRSt6vectorINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESaIS5_EEPKvRi+0x10c)
+[VENUS] get_string_vector_t override
+  vec_size_before=0 index=28 count=0 param=0x2358
+  ra0=0x76d65fbc (obj=/opt/AEC_T41_16K_NS_OUT_UC.mgk, symbol=_Z17read_common_paramRNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEERSt6vectorIS4_SaIS4_EES9_RS6_IiSaIiEES9_S9_RiS9_S5_PKvSD_+0x108)
+  param_ddr_base=0x76e6b000 in_ddr=0 ddr_off=-1
+  param[0..15]=00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+[VENUS] memcpy guard: blocked memcpy(0x2374 -> 0x7ffd7458, n=4) src_ok=0 dest_ok=1
+  ra0=0x76d721d4 (obj=/opt/AEC_T41_16K_NS_OUT_UC.mgk, base=0x76d43000, symbol=?+0x0)
+[VENUS] memcpy guard: blocked memcpy(0x2378 -> 0x7ffd7290, n=4) src_ok=0 dest_ok=1
+  ra0=0x7751b1f4 (obj=/opt/libnna.so, base=0x77509000, symbol=_Z12get_string_tRNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEPKvRi+0x10c)
+[VENUS] get_string_t override
+  index=36 len=0 param=0x2358
+  ra0=0x76d6d180 (obj=/opt/AEC_T41_16K_NS_OUT_UC.mgk, symbol=_Z19add_int8_param_initPKvPvS1_xRSt6vectorIN5magik5venus10TensorInfoESaIS5_EERSt3mapIiSt4pairIS2_INSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESaISG_EESI_ESt4lessIiESaISA_IKiSJ_EEEPNS4_14MagikModelBase13PyramidConfigESt8functionIFNS4_11ReturnValueERSt10unique_ptrINS4_6kernel11KernelParamESt14default_deleteISY_EEPNS4_8OpConfigEEE+0x22c)
+  param[0..15]=00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+Assertion failed: void add_int8_param_init(const void*, void*, void*, int64_t, std::vector<magik::venus::TensorInfo>&, std::map<int, std::pair<std::vector<std::__cxx11::basic_string<char> >, std::vector<std::__cxx11::basic_string<char> > > >&, magik::venus::MagikModelBase::PyramidConfig*, magik::venus::KernelFuncPtr) (/soc/czhang/magik_kernel_sample/src/magik_compile/magik_op_override.cpp: output_size==1: 380)
+

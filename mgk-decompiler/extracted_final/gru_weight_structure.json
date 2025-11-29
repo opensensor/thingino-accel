@@ -1,0 +1,80 @@
+{
+  "gru_bidirectional": {
+    "offset": 0,
+    "size": 12864,
+    "structure": {
+      "forward_weight_ih": {
+        "offset": 0,
+        "size": 3072,
+        "shape": [
+          96,
+          32
+        ]
+      },
+      "forward_weight_hh": {
+        "offset": 3072,
+        "size": 3072,
+        "shape": [
+          96,
+          32
+        ]
+      },
+      "forward_bias": {
+        "offset": 6144,
+        "size": 192,
+        "shape": [
+          192
+        ]
+      },
+      "backward_weight_ih": {
+        "offset": 6336,
+        "size": 3072,
+        "shape": [
+          96,
+          32
+        ]
+      },
+      "backward_weight_hh": {
+        "offset": 9408,
+        "size": 3072,
+        "shape": [
+          96,
+          32
+        ]
+      },
+      "backward_bias": {
+        "offset": 12480,
+        "size": 192,
+        "shape": [
+          192
+        ]
+      },
+      "padding": {
+        "offset": 12672,
+        "size": 192
+      }
+    }
+  },
+  "gru_unidirectional": {
+    "offset": 139456,
+    "size": 4096,
+    "structure": {
+      "weight_ih": {
+        "offset": 0,
+        "size": 3072,
+        "shape": [
+          96,
+          32
+        ]
+      },
+      "weight_hh_or_bias": {
+        "offset": 3072,
+        "size": 1024,
+        "shape": [
+          32,
+          32
+        ]
+      }
+    }
+  }
+}

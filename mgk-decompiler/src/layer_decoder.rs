@@ -50,6 +50,10 @@ pub fn detect_layers(mgk: &MgkFile) -> Result<Vec<DetectedLayer>> {
             flags: 0,
             input_tensors: Vec::new(),
             output_tensors: Vec::new(),
+            quant_params: None,
+            weight_offset: None,
+            weight_size: None,
+            is_fused: false,
         });
     }
 
@@ -199,6 +203,10 @@ fn detect_from_layer_params(
                 flags: 0,
                 input_tensors: Vec::new(),
                 output_tensors: Vec::new(),
+                quant_params: None,
+                weight_offset: None,
+                weight_size: None,
+                is_fused: false,
             });
         }
     }

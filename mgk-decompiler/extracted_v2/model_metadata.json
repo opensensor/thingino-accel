@@ -1,0 +1,2523 @@
+{
+  "source_file": "mgk-decompiler/AEC_T41_16K_NS_OUT_UC.mgk",
+  "file_size": 649920,
+  "elf_end": 494484,
+  "weight_offset": 496276,
+  "weight_size": 153644,
+  "sections": [
+    {
+      "name": ".MIPS.abiflags",
+      "offset": 280,
+      "size": 24
+    },
+    {
+      "name": ".dynamic",
+      "offset": 304,
+      "size": 312
+    },
+    {
+      "name": ".hash",
+      "offset": 616,
+      "size": 4244
+    },
+    {
+      "name": ".dynsym",
+      "offset": 4860,
+      "size": 8608
+    },
+    {
+      "name": ".dynstr",
+      "offset": 13468,
+      "size": 36304
+    },
+    {
+      "name": ".gnu.version",
+      "offset": 49772,
+      "size": 1076
+    },
+    {
+      "name": ".gnu.version_r",
+      "offset": 50848,
+      "size": 128
+    },
+    {
+      "name": ".rel.dyn",
+      "offset": 50976,
+      "size": 4384
+    },
+    {
+      "name": ".init",
+      "offset": 59040,
+      "size": 40
+    },
+    {
+      "name": ".text",
+      "offset": 59088,
+      "size": 383744
+    },
+    {
+      "name": ".MIPS.stubs",
+      "offset": 442832,
+      "size": 1088
+    },
+    {
+      "name": ".fini",
+      "offset": 443920,
+      "size": 40
+    },
+    {
+      "name": ".rodata",
+      "offset": 443968,
+      "size": 29424
+    },
+    {
+      "name": ".eh_frame_hdr",
+      "offset": 473392,
+      "size": 2964
+    },
+    {
+      "name": ".eh_frame",
+      "offset": 476356,
+      "size": 10040
+    },
+    {
+      "name": ".gcc_except_table",
+      "offset": 487424,
+      "size": 656
+    },
+    {
+      "name": ".init_array",
+      "offset": 488080,
+      "size": 84
+    },
+    {
+      "name": ".fini_array",
+      "offset": 488164,
+      "size": 4
+    },
+    {
+      "name": ".data.rel.ro",
+      "offset": 488168,
+      "size": 2720
+    },
+    {
+      "name": ".data",
+      "offset": 490888,
+      "size": 4
+    },
+    {
+      "name": ".got",
+      "offset": 490896,
+      "size": 2060
+    },
+    {
+      "name": ".sdata",
+      "offset": 492956,
+      "size": 4
+    },
+    {
+      "name": ".bss",
+      "offset": 492960,
+      "size": 368
+    },
+    {
+      "name": ".comment",
+      "offset": 492960,
+      "size": 115
+    },
+    {
+      "name": ".gnu.attributes",
+      "offset": 493075,
+      "size": 16
+    },
+    {
+      "name": ".shstrtab",
+      "offset": 493091,
+      "size": 273
+    }
+  ],
+  "tensors": [
+    {
+      "index": 0,
+      "name": "onnx__QuantizeConcatInference_500",
+      "is_input": true,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NHWC",
+      "channel": 1,
+      "shape": [
+        1,
+        1,
+        128,
+        32
+      ]
+    },
+    {
+      "index": 1,
+      "name": "__FormatConvert__26",
+      "is_input": false,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NDHWC32",
+      "channel": 1,
+      "shape": [
+        1,
+        1,
+        1,
+        128,
+        32
+      ]
+    },
+    {
+      "index": 2,
+      "name": "onnx__QuantizeConcatInference_481",
+      "is_input": true,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NHWC",
+      "channel": 1,
+      "shape": [
+        1,
+        1,
+        64,
+        32
+      ]
+    },
+    {
+      "index": 3,
+      "name": "__FormatConvert__25",
+      "is_input": false,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NDHWC32",
+      "channel": 1,
+      "shape": [
+        1,
+        1,
+        1,
+        64,
+        32
+      ]
+    },
+    {
+      "index": 4,
+      "name": "onnx__QuantizeConcatInference_464",
+      "is_input": true,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NHWC",
+      "channel": 1,
+      "shape": [
+        1,
+        1,
+        64,
+        32
+      ]
+    },
+    {
+      "index": 5,
+      "name": "__FormatConvert__24",
+      "is_input": false,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NDHWC32",
+      "channel": 1,
+      "shape": [
+        1,
+        1,
+        1,
+        64,
+        32
+      ]
+    },
+    {
+      "index": 6,
+      "name": "onnx__QuantizeConcatInference_447",
+      "is_input": true,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NHWC",
+      "channel": 1,
+      "shape": [
+        1,
+        1,
+        64,
+        32
+      ]
+    },
+    {
+      "index": 7,
+      "name": "__FormatConvert__23",
+      "is_input": false,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NDHWC32",
+      "channel": 1,
+      "shape": [
+        1,
+        1,
+        1,
+        64,
+        32
+      ]
+    },
+    {
+      "index": 8,
+      "name": "onnx__QuantizeConcatInference_430",
+      "is_input": true,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NHWC",
+      "channel": 1,
+      "shape": [
+        1,
+        1,
+        64,
+        32
+      ]
+    },
+    {
+      "index": 9,
+      "name": "__FormatConvert__22",
+      "is_input": false,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NDHWC32",
+      "channel": 1,
+      "shape": [
+        1,
+        1,
+        1,
+        64,
+        32
+      ]
+    },
+    {
+      "index": 10,
+      "name": "onnx__QuantizeConcatInference_325",
+      "is_input": true,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NHWC",
+      "channel": 1,
+      "shape": [
+        1,
+        1,
+        64,
+        32
+      ]
+    },
+    {
+      "index": 11,
+      "name": "__FormatConvert__21",
+      "is_input": false,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NDHWC32",
+      "channel": 1,
+      "shape": [
+        1,
+        1,
+        1,
+        64,
+        32
+      ]
+    },
+    {
+      "index": 12,
+      "name": "onnx__QuantizeConcatInference_313",
+      "is_input": true,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NHWC",
+      "channel": 1,
+      "shape": [
+        1,
+        1,
+        64,
+        32
+      ]
+    },
+    {
+      "index": 13,
+      "name": "__FormatConvert__20",
+      "is_input": false,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NDHWC32",
+      "channel": 1,
+      "shape": [
+        1,
+        1,
+        1,
+        64,
+        32
+      ]
+    },
+    {
+      "index": 14,
+      "name": "onnx__QuantizeConcatInference_301",
+      "is_input": true,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NHWC",
+      "channel": 1,
+      "shape": [
+        1,
+        1,
+        64,
+        32
+      ]
+    },
+    {
+      "index": 15,
+      "name": "__FormatConvert__19",
+      "is_input": false,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NDHWC32",
+      "channel": 1,
+      "shape": [
+        1,
+        1,
+        1,
+        64,
+        32
+      ]
+    },
+    {
+      "index": 16,
+      "name": "onnx__QuantizeConcatInference_289",
+      "is_input": true,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NHWC",
+      "channel": 1,
+      "shape": [
+        1,
+        1,
+        64,
+        32
+      ]
+    },
+    {
+      "index": 17,
+      "name": "__FormatConvert__18",
+      "is_input": false,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NDHWC32",
+      "channel": 1,
+      "shape": [
+        1,
+        1,
+        1,
+        64,
+        32
+      ]
+    },
+    {
+      "index": 18,
+      "name": "onnx__QuantizeConcatInference_277",
+      "is_input": true,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NHWC",
+      "channel": 1,
+      "shape": [
+        1,
+        1,
+        128,
+        32
+      ]
+    },
+    {
+      "index": 19,
+      "name": "__FormatConvert__17",
+      "is_input": false,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NDHWC32",
+      "channel": 1,
+      "shape": [
+        1,
+        1,
+        1,
+        128,
+        32
+      ]
+    },
+    {
+      "index": 20,
+      "name": "input",
+      "is_input": true,
+      "is_output": false,
+      "dtype": "FP32",
+      "layout": "NHWC",
+      "channel": 1,
+      "shape": [
+        1,
+        1,
+        256,
+        8
+      ]
+    },
+    {
+      "index": 21,
+      "name": "layer_80_QuantizeBatchNorm",
+      "is_input": false,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NHWC",
+      "channel": 1,
+      "shape": [
+        1,
+        1,
+        256,
+        8
+      ]
+    },
+    {
+      "index": 22,
+      "name": "__FormatConvert__15",
+      "is_input": false,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NDHWC32",
+      "channel": 1,
+      "shape": [
+        1,
+        1,
+        1,
+        256,
+        32
+      ]
+    },
+    {
+      "index": 23,
+      "name": "layer_78_QuantizeFeature",
+      "is_input": false,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NDHWC32",
+      "channel": 1,
+      "shape": [
+        1,
+        1,
+        1,
+        128,
+        32
+      ]
+    },
+    {
+      "index": 24,
+      "name": "layer_73_QuantizeFeature",
+      "is_input": false,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NDHWC32",
+      "channel": 1,
+      "shape": [
+        1,
+        1,
+        1,
+        64,
+        32
+      ]
+    },
+    {
+      "index": 25,
+      "name": "layer_68_QuantizeFeature",
+      "is_input": false,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NDHWC32",
+      "channel": 1,
+      "shape": [
+        1,
+        1,
+        1,
+        64,
+        32
+      ]
+    },
+    {
+      "index": 26,
+      "name": "layer_63_QuantizeFeature",
+      "is_input": false,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NDHWC32",
+      "channel": 1,
+      "shape": [
+        1,
+        1,
+        1,
+        64,
+        32
+      ]
+    },
+    {
+      "index": 27,
+      "name": "layer_58_QuantizeFeature",
+      "is_input": false,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NDHWC32",
+      "channel": 1,
+      "shape": [
+        1,
+        1,
+        1,
+        64,
+        32
+      ]
+    },
+    {
+      "index": 28,
+      "name": "__FormatConvert__10",
+      "is_input": false,
+      "is_output": true,
+      "dtype": "UINT8",
+      "layout": "NHWC",
+      "channel": 1,
+      "shape": [
+        1,
+        1,
+        64,
+        32
+      ]
+    },
+    {
+      "index": 29,
+      "name": "input.3",
+      "is_input": false,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NHWC",
+      "channel": 1,
+      "shape": [
+        1,
+        1,
+        64,
+        32
+      ]
+    },
+    {
+      "index": 30,
+      "name": "layer_46_QuantizeGRU",
+      "is_input": false,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NHWC",
+      "channel": 1,
+      "shape": [
+        1,
+        64,
+        2,
+        32
+      ]
+    },
+    {
+      "index": 31,
+      "name": "__Reshape__0",
+      "is_input": false,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NHWC",
+      "channel": 1,
+      "shape": [
+        1,
+        64,
+        64
+      ]
+    },
+    {
+      "index": 32,
+      "name": "__FormatConvert__1",
+      "is_input": false,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NDHWC32",
+      "channel": 1,
+      "shape": [
+        1,
+        2,
+        1,
+        64,
+        32
+      ]
+    },
+    {
+      "index": 33,
+      "name": "layer_44_QuantizeFeature",
+      "is_input": false,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NDHWC32",
+      "channel": 1,
+      "shape": [
+        1,
+        1,
+        1,
+        64,
+        32
+      ]
+    },
+    {
+      "index": 34,
+      "name": "__FormatConvert__9",
+      "is_input": false,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NHWC",
+      "channel": 1,
+      "shape": [
+        1,
+        1,
+        64,
+        32
+      ]
+    },
+    {
+      "index": 35,
+      "name": "onnx__Transpose_371",
+      "is_input": false,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NHWC",
+      "channel": 1,
+      "shape": [
+        1,
+        1,
+        64,
+        32
+      ]
+    },
+    {
+      "index": 36,
+      "name": "__FormatConvert__27",
+      "is_input": false,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NDHWC32",
+      "channel": 1,
+      "shape": [
+        1,
+        1,
+        1,
+        64,
+        32
+      ]
+    },
+    {
+      "index": 37,
+      "name": "layer_43_QuantizeBatchNorm",
+      "is_input": false,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NDHWC32",
+      "channel": 1,
+      "shape": [
+        1,
+        1,
+        1,
+        64,
+        32
+      ]
+    },
+    {
+      "index": 38,
+      "name": "layer_41_QuantizeFeature",
+      "is_input": false,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NDHWC32",
+      "channel": 1,
+      "shape": [
+        1,
+        1,
+        1,
+        64,
+        32
+      ]
+    },
+    {
+      "index": 39,
+      "name": "__FormatConvert__8",
+      "is_input": false,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NHWC",
+      "channel": 1,
+      "shape": [
+        1,
+        1,
+        64,
+        32
+      ]
+    },
+    {
+      "index": 40,
+      "name": "input.15",
+      "is_input": false,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NHWC",
+      "channel": 1,
+      "shape": [
+        64,
+        1,
+        1,
+        32
+      ]
+    },
+    {
+      "index": 41,
+      "name": "312_last_layer",
+      "is_input": false,
+      "is_output": true,
+      "dtype": "UINT8",
+      "layout": "NHWC",
+      "channel": 1,
+      "shape": [
+        1,
+        1,
+        64,
+        32
+      ]
+    },
+    {
+      "index": 42,
+      "name": "300_last_layer",
+      "is_input": false,
+      "is_output": true,
+      "dtype": "UINT8",
+      "layout": "NHWC",
+      "channel": 1,
+      "shape": [
+        1,
+        1,
+        64,
+        32
+      ]
+    },
+    {
+      "index": 43,
+      "name": "288_last_layer",
+      "is_input": false,
+      "is_output": true,
+      "dtype": "UINT8",
+      "layout": "NHWC",
+      "channel": 1,
+      "shape": [
+        1,
+        1,
+        64,
+        32
+      ]
+    },
+    {
+      "index": 44,
+      "name": "276_last_layer",
+      "is_input": false,
+      "is_output": true,
+      "dtype": "UINT8",
+      "layout": "NHWC",
+      "channel": 1,
+      "shape": [
+        1,
+        1,
+        128,
+        32
+      ]
+    },
+    {
+      "index": 45,
+      "name": "hidden",
+      "is_input": true,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NHWC",
+      "channel": 1,
+      "shape": [
+        64,
+        1,
+        1,
+        32
+      ]
+    },
+    {
+      "index": 46,
+      "name": "layer_37_QuantizeGRU",
+      "is_input": false,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NHWC",
+      "channel": 1,
+      "shape": [
+        64,
+        1,
+        1,
+        32
+      ]
+    },
+    {
+      "index": 47,
+      "name": "layer_37_QuantizeGRU:1",
+      "is_input": false,
+      "is_output": true,
+      "dtype": "UINT8",
+      "layout": "NHWC",
+      "channel": 1,
+      "shape": [
+        64,
+        1,
+        1,
+        32
+      ]
+    },
+    {
+      "index": 48,
+      "name": "__Reshape__1",
+      "is_input": false,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NHWC",
+      "channel": 1,
+      "shape": [
+        64,
+        1,
+        32
+      ]
+    },
+    {
+      "index": 49,
+      "name": "__FormatConvert__2",
+      "is_input": false,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NDHWC32",
+      "channel": 1,
+      "shape": [
+        64,
+        1,
+        1,
+        1,
+        32
+      ]
+    },
+    {
+      "index": 50,
+      "name": "layer_35_QuantizeFeature",
+      "is_input": false,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NDHWC32",
+      "channel": 1,
+      "shape": [
+        64,
+        1,
+        1,
+        1,
+        32
+      ]
+    },
+    {
+      "index": 51,
+      "name": "__FormatConvert__7",
+      "is_input": false,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NHWC",
+      "channel": 1,
+      "shape": [
+        64,
+        1,
+        1,
+        32
+      ]
+    },
+    {
+      "index": 52,
+      "name": "onnx__Transpose_414",
+      "is_input": false,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NHWC",
+      "channel": 1,
+      "shape": [
+        1,
+        64,
+        1,
+        32
+      ]
+    },
+    {
+      "index": 53,
+      "name": "__ConvertTensor__18",
+      "is_input": false,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NHWC",
+      "channel": 1,
+      "shape": [
+        1,
+        1,
+        64,
+        32
+      ]
+    },
+    {
+      "index": 54,
+      "name": "__FormatConvert__0",
+      "is_input": false,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NDHWC32",
+      "channel": 1,
+      "shape": [
+        1,
+        1,
+        1,
+        64,
+        32
+      ]
+    },
+    {
+      "index": 55,
+      "name": "layer_34_QuantizeBatchNorm",
+      "is_input": false,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NDHWC32",
+      "channel": 1,
+      "shape": [
+        1,
+        1,
+        1,
+        64,
+        32
+      ]
+    },
+    {
+      "index": 56,
+      "name": "layer_32_QuantizeFeature",
+      "is_input": false,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NDHWC32",
+      "channel": 1,
+      "shape": [
+        1,
+        1,
+        1,
+        64,
+        32
+      ]
+    },
+    {
+      "index": 57,
+      "name": "layer_28_QuantizeFeature",
+      "is_input": false,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NDHWC32",
+      "channel": 1,
+      "shape": [
+        1,
+        4,
+        1,
+        64,
+        32
+      ]
+    },
+    {
+      "index": 58,
+      "name": "layer_26_QuantizeFeature",
+      "is_input": false,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NDHWC32",
+      "channel": 1,
+      "shape": [
+        1,
+        1,
+        1,
+        64,
+        32
+      ]
+    },
+    {
+      "index": 59,
+      "name": "layer_22_QuantizeFeature",
+      "is_input": false,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NDHWC32",
+      "channel": 1,
+      "shape": [
+        1,
+        4,
+        1,
+        64,
+        32
+      ]
+    },
+    {
+      "index": 60,
+      "name": "layer_20_QuantizeFeature",
+      "is_input": false,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NDHWC32",
+      "channel": 1,
+      "shape": [
+        1,
+        1,
+        1,
+        64,
+        32
+      ]
+    },
+    {
+      "index": 61,
+      "name": "layer_16_QuantizeFeature",
+      "is_input": false,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NDHWC32",
+      "channel": 1,
+      "shape": [
+        1,
+        4,
+        1,
+        64,
+        32
+      ]
+    },
+    {
+      "index": 62,
+      "name": "layer_14_QuantizeFeature",
+      "is_input": false,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NDHWC32",
+      "channel": 1,
+      "shape": [
+        1,
+        1,
+        1,
+        64,
+        32
+      ]
+    },
+    {
+      "index": 63,
+      "name": "layer_10_QuantizeFeature",
+      "is_input": false,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NDHWC32",
+      "channel": 1,
+      "shape": [
+        1,
+        4,
+        1,
+        64,
+        32
+      ]
+    },
+    {
+      "index": 64,
+      "name": "x.39",
+      "is_input": false,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NDHWC32",
+      "channel": 1,
+      "shape": [
+        1,
+        4,
+        1,
+        128,
+        32
+      ]
+    },
+    {
+      "index": 65,
+      "name": "layer_8_QuantizeFeature",
+      "is_input": false,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NDHWC32",
+      "channel": 1,
+      "shape": [
+        1,
+        1,
+        1,
+        128,
+        32
+      ]
+    },
+    {
+      "index": 66,
+      "name": "layer_4_QuantizeFeature",
+      "is_input": false,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NDHWC32",
+      "channel": 1,
+      "shape": [
+        1,
+        4,
+        1,
+        128,
+        32
+      ]
+    },
+    {
+      "index": 67,
+      "name": "x.43",
+      "is_input": false,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NDHWC32",
+      "channel": 1,
+      "shape": [
+        1,
+        4,
+        1,
+        256,
+        32
+      ]
+    },
+    {
+      "index": 68,
+      "name": "layer_2_QuantizeFeature",
+      "is_input": false,
+      "is_output": false,
+      "dtype": "UINT8",
+      "layout": "NDHWC32",
+      "channel": 1,
+      "shape": [
+        1,
+        1,
+        1,
+        256,
+        32
+      ]
+    },
+    {
+      "index": 69,
+      "name": "onnx__Sigmoid_521_last_layer",
+      "is_input": false,
+      "is_output": true,
+      "dtype": "FP32",
+      "layout": "NHWC",
+      "channel": 1,
+      "shape": [
+        1,
+        1,
+        256,
+        2
+      ]
+    },
+    {
+      "index": 70,
+      "name": "499_last_layer",
+      "is_input": false,
+      "is_output": true,
+      "dtype": "UINT8",
+      "layout": "NHWC",
+      "channel": 1,
+      "shape": [
+        1,
+        1,
+        128,
+        32
+      ]
+    },
+    {
+      "index": 71,
+      "name": "480_last_layer",
+      "is_input": false,
+      "is_output": true,
+      "dtype": "UINT8",
+      "layout": "NHWC",
+      "channel": 1,
+      "shape": [
+        1,
+        1,
+        64,
+        32
+      ]
+    },
+    {
+      "index": 72,
+      "name": "463_last_layer",
+      "is_input": false,
+      "is_output": true,
+      "dtype": "UINT8",
+      "layout": "NHWC",
+      "channel": 1,
+      "shape": [
+        1,
+        1,
+        64,
+        32
+      ]
+    },
+    {
+      "index": 73,
+      "name": "446_last_layer",
+      "is_input": false,
+      "is_output": true,
+      "dtype": "UINT8",
+      "layout": "NHWC",
+      "channel": 1,
+      "shape": [
+        1,
+        1,
+        64,
+        32
+      ]
+    },
+    {
+      "index": 74,
+      "name": "429_last_layer",
+      "is_input": false,
+      "is_output": true,
+      "dtype": "UINT8",
+      "layout": "NHWC",
+      "channel": 1,
+      "shape": [
+        1,
+        1,
+        64,
+        32
+      ]
+    }
+  ],
+  "layers": {
+    "80": {
+      "type": "QuantizeBatchNorm",
+      "tensors": [
+        {
+          "index": 21,
+          "name": "layer_80_QuantizeBatchNorm",
+          "is_input": false,
+          "is_output": false,
+          "dtype": "UINT8",
+          "layout": "NHWC",
+          "channel": 1,
+          "shape": [
+            1,
+            1,
+            256,
+            8
+          ]
+        }
+      ]
+    },
+    "78": {
+      "type": "QuantizeFeature",
+      "tensors": [
+        {
+          "index": 23,
+          "name": "layer_78_QuantizeFeature",
+          "is_input": false,
+          "is_output": false,
+          "dtype": "UINT8",
+          "layout": "NDHWC32",
+          "channel": 1,
+          "shape": [
+            1,
+            1,
+            1,
+            128,
+            32
+          ]
+        }
+      ]
+    },
+    "73": {
+      "type": "QuantizeFeature",
+      "tensors": [
+        {
+          "index": 24,
+          "name": "layer_73_QuantizeFeature",
+          "is_input": false,
+          "is_output": false,
+          "dtype": "UINT8",
+          "layout": "NDHWC32",
+          "channel": 1,
+          "shape": [
+            1,
+            1,
+            1,
+            64,
+            32
+          ]
+        }
+      ]
+    },
+    "68": {
+      "type": "QuantizeFeature",
+      "tensors": [
+        {
+          "index": 25,
+          "name": "layer_68_QuantizeFeature",
+          "is_input": false,
+          "is_output": false,
+          "dtype": "UINT8",
+          "layout": "NDHWC32",
+          "channel": 1,
+          "shape": [
+            1,
+            1,
+            1,
+            64,
+            32
+          ]
+        }
+      ]
+    },
+    "63": {
+      "type": "QuantizeFeature",
+      "tensors": [
+        {
+          "index": 26,
+          "name": "layer_63_QuantizeFeature",
+          "is_input": false,
+          "is_output": false,
+          "dtype": "UINT8",
+          "layout": "NDHWC32",
+          "channel": 1,
+          "shape": [
+            1,
+            1,
+            1,
+            64,
+            32
+          ]
+        }
+      ]
+    },
+    "58": {
+      "type": "QuantizeFeature",
+      "tensors": [
+        {
+          "index": 27,
+          "name": "layer_58_QuantizeFeature",
+          "is_input": false,
+          "is_output": false,
+          "dtype": "UINT8",
+          "layout": "NDHWC32",
+          "channel": 1,
+          "shape": [
+            1,
+            1,
+            1,
+            64,
+            32
+          ]
+        }
+      ]
+    },
+    "46": {
+      "type": "QuantizeGRU",
+      "tensors": [
+        {
+          "index": 30,
+          "name": "layer_46_QuantizeGRU",
+          "is_input": false,
+          "is_output": false,
+          "dtype": "UINT8",
+          "layout": "NHWC",
+          "channel": 1,
+          "shape": [
+            1,
+            64,
+            2,
+            32
+          ]
+        }
+      ]
+    },
+    "44": {
+      "type": "QuantizeFeature",
+      "tensors": [
+        {
+          "index": 33,
+          "name": "layer_44_QuantizeFeature",
+          "is_input": false,
+          "is_output": false,
+          "dtype": "UINT8",
+          "layout": "NDHWC32",
+          "channel": 1,
+          "shape": [
+            1,
+            1,
+            1,
+            64,
+            32
+          ]
+        }
+      ]
+    },
+    "43": {
+      "type": "QuantizeBatchNorm",
+      "tensors": [
+        {
+          "index": 37,
+          "name": "layer_43_QuantizeBatchNorm",
+          "is_input": false,
+          "is_output": false,
+          "dtype": "UINT8",
+          "layout": "NDHWC32",
+          "channel": 1,
+          "shape": [
+            1,
+            1,
+            1,
+            64,
+            32
+          ]
+        }
+      ]
+    },
+    "41": {
+      "type": "QuantizeFeature",
+      "tensors": [
+        {
+          "index": 38,
+          "name": "layer_41_QuantizeFeature",
+          "is_input": false,
+          "is_output": false,
+          "dtype": "UINT8",
+          "layout": "NDHWC32",
+          "channel": 1,
+          "shape": [
+            1,
+            1,
+            1,
+            64,
+            32
+          ]
+        }
+      ]
+    },
+    "37": {
+      "type": "QuantizeGRU",
+      "tensors": [
+        {
+          "index": 46,
+          "name": "layer_37_QuantizeGRU",
+          "is_input": false,
+          "is_output": false,
+          "dtype": "UINT8",
+          "layout": "NHWC",
+          "channel": 1,
+          "shape": [
+            64,
+            1,
+            1,
+            32
+          ]
+        },
+        {
+          "index": 47,
+          "name": "layer_37_QuantizeGRU:1",
+          "is_input": false,
+          "is_output": true,
+          "dtype": "UINT8",
+          "layout": "NHWC",
+          "channel": 1,
+          "shape": [
+            64,
+            1,
+            1,
+            32
+          ]
+        }
+      ]
+    },
+    "35": {
+      "type": "QuantizeFeature",
+      "tensors": [
+        {
+          "index": 50,
+          "name": "layer_35_QuantizeFeature",
+          "is_input": false,
+          "is_output": false,
+          "dtype": "UINT8",
+          "layout": "NDHWC32",
+          "channel": 1,
+          "shape": [
+            64,
+            1,
+            1,
+            1,
+            32
+          ]
+        }
+      ]
+    },
+    "34": {
+      "type": "QuantizeBatchNorm",
+      "tensors": [
+        {
+          "index": 55,
+          "name": "layer_34_QuantizeBatchNorm",
+          "is_input": false,
+          "is_output": false,
+          "dtype": "UINT8",
+          "layout": "NDHWC32",
+          "channel": 1,
+          "shape": [
+            1,
+            1,
+            1,
+            64,
+            32
+          ]
+        }
+      ]
+    },
+    "32": {
+      "type": "QuantizeFeature",
+      "tensors": [
+        {
+          "index": 56,
+          "name": "layer_32_QuantizeFeature",
+          "is_input": false,
+          "is_output": false,
+          "dtype": "UINT8",
+          "layout": "NDHWC32",
+          "channel": 1,
+          "shape": [
+            1,
+            1,
+            1,
+            64,
+            32
+          ]
+        }
+      ]
+    },
+    "28": {
+      "type": "QuantizeFeature",
+      "tensors": [
+        {
+          "index": 57,
+          "name": "layer_28_QuantizeFeature",
+          "is_input": false,
+          "is_output": false,
+          "dtype": "UINT8",
+          "layout": "NDHWC32",
+          "channel": 1,
+          "shape": [
+            1,
+            4,
+            1,
+            64,
+            32
+          ]
+        }
+      ]
+    },
+    "26": {
+      "type": "QuantizeFeature",
+      "tensors": [
+        {
+          "index": 58,
+          "name": "layer_26_QuantizeFeature",
+          "is_input": false,
+          "is_output": false,
+          "dtype": "UINT8",
+          "layout": "NDHWC32",
+          "channel": 1,
+          "shape": [
+            1,
+            1,
+            1,
+            64,
+            32
+          ]
+        }
+      ]
+    },
+    "22": {
+      "type": "QuantizeFeature",
+      "tensors": [
+        {
+          "index": 59,
+          "name": "layer_22_QuantizeFeature",
+          "is_input": false,
+          "is_output": false,
+          "dtype": "UINT8",
+          "layout": "NDHWC32",
+          "channel": 1,
+          "shape": [
+            1,
+            4,
+            1,
+            64,
+            32
+          ]
+        }
+      ]
+    },
+    "20": {
+      "type": "QuantizeFeature",
+      "tensors": [
+        {
+          "index": 60,
+          "name": "layer_20_QuantizeFeature",
+          "is_input": false,
+          "is_output": false,
+          "dtype": "UINT8",
+          "layout": "NDHWC32",
+          "channel": 1,
+          "shape": [
+            1,
+            1,
+            1,
+            64,
+            32
+          ]
+        }
+      ]
+    },
+    "16": {
+      "type": "QuantizeFeature",
+      "tensors": [
+        {
+          "index": 61,
+          "name": "layer_16_QuantizeFeature",
+          "is_input": false,
+          "is_output": false,
+          "dtype": "UINT8",
+          "layout": "NDHWC32",
+          "channel": 1,
+          "shape": [
+            1,
+            4,
+            1,
+            64,
+            32
+          ]
+        }
+      ]
+    },
+    "14": {
+      "type": "QuantizeFeature",
+      "tensors": [
+        {
+          "index": 62,
+          "name": "layer_14_QuantizeFeature",
+          "is_input": false,
+          "is_output": false,
+          "dtype": "UINT8",
+          "layout": "NDHWC32",
+          "channel": 1,
+          "shape": [
+            1,
+            1,
+            1,
+            64,
+            32
+          ]
+        }
+      ]
+    },
+    "10": {
+      "type": "QuantizeFeature",
+      "tensors": [
+        {
+          "index": 63,
+          "name": "layer_10_QuantizeFeature",
+          "is_input": false,
+          "is_output": false,
+          "dtype": "UINT8",
+          "layout": "NDHWC32",
+          "channel": 1,
+          "shape": [
+            1,
+            4,
+            1,
+            64,
+            32
+          ]
+        }
+      ]
+    },
+    "8": {
+      "type": "QuantizeFeature",
+      "tensors": [
+        {
+          "index": 65,
+          "name": "layer_8_QuantizeFeature",
+          "is_input": false,
+          "is_output": false,
+          "dtype": "UINT8",
+          "layout": "NDHWC32",
+          "channel": 1,
+          "shape": [
+            1,
+            1,
+            1,
+            128,
+            32
+          ]
+        }
+      ]
+    },
+    "4": {
+      "type": "QuantizeFeature",
+      "tensors": [
+        {
+          "index": 66,
+          "name": "layer_4_QuantizeFeature",
+          "is_input": false,
+          "is_output": false,
+          "dtype": "UINT8",
+          "layout": "NDHWC32",
+          "channel": 1,
+          "shape": [
+            1,
+            4,
+            1,
+            128,
+            32
+          ]
+        }
+      ]
+    },
+    "2": {
+      "type": "QuantizeFeature",
+      "tensors": [
+        {
+          "index": 68,
+          "name": "layer_2_QuantizeFeature",
+          "is_input": false,
+          "is_output": false,
+          "dtype": "UINT8",
+          "layout": "NDHWC32",
+          "channel": 1,
+          "shape": [
+            1,
+            1,
+            1,
+            256,
+            32
+          ]
+        }
+      ]
+    }
+  },
+  "dense_regions": [
+    {
+      "start": 0,
+      "end": 12864,
+      "size": 12864,
+      "mean": -0.71159827709198,
+      "std": 75.79618835449219,
+      "zeros_pct": 2.153296019900498
+    },
+    {
+      "start": 13568,
+      "end": 14016,
+      "size": 448,
+      "mean": -39.39731979370117,
+      "std": 57.644683837890625,
+      "zeros_pct": 32.36607142857143
+    },
+    {
+      "start": 14592,
+      "end": 15040,
+      "size": 448,
+      "mean": -39.85714340209961,
+      "std": 57.14476776123047,
+      "zeros_pct": 32.142857142857146
+    },
+    {
+      "start": 15616,
+      "end": 16320,
+      "size": 704,
+      "mean": -25.549715042114258,
+      "std": 52.53670883178711,
+      "zeros_pct": 48.57954545454545
+    },
+    {
+      "start": 16640,
+      "end": 17088,
+      "size": 448,
+      "mean": -41.33928680419922,
+      "std": 56.29296875,
+      "zeros_pct": 32.8125
+    },
+    {
+      "start": 17536,
+      "end": 72704,
+      "size": 55168,
+      "mean": -0.859193742275238,
+      "std": 74.70024871826172,
+      "zeros_pct": 3.618039443155453
+    },
+    {
+      "start": 73472,
+      "end": 74048,
+      "size": 576,
+      "mean": -35.22222137451172,
+      "std": 49.263526916503906,
+      "zeros_pct": 50.173611111111114
+    },
+    {
+      "start": 74496,
+      "end": 75072,
+      "size": 576,
+      "mean": -36.25173568725586,
+      "std": 49.03935623168945,
+      "zeros_pct": 50.0
+    },
+    {
+      "start": 75520,
+      "end": 75840,
+      "size": 320,
+      "mean": -63.006248474121094,
+      "std": 48.42094039916992,
+      "zeros_pct": 15.0
+    },
+    {
+      "start": 76288,
+      "end": 79936,
+      "size": 3648,
+      "mean": -22.53316879272461,
+      "std": 43.18109893798828,
+      "zeros_pct": 67.16008771929825
+    },
+    {
+      "start": 80640,
+      "end": 82752,
+      "size": 2112,
+      "mean": -21.019886016845703,
+      "std": 42.06965255737305,
+      "zeros_pct": 68.37121212121212
+    },
+    {
+      "start": 84736,
+      "end": 85056,
+      "size": 320,
+      "mean": -67.2718734741211,
+      "std": 41.03646469116211,
+      "zeros_pct": 15.625
+    },
+    {
+      "start": 85760,
+      "end": 86080,
+      "size": 320,
+      "mean": -67.32499694824219,
+      "std": 42.21004867553711,
+      "zeros_pct": 15.312500000000002
+    },
+    {
+      "start": 89856,
+      "end": 90176,
+      "size": 320,
+      "mean": -65.44999694824219,
+      "std": 44.747528076171875,
+      "zeros_pct": 15.625
+    },
+    {
+      "start": 90880,
+      "end": 91200,
+      "size": 320,
+      "mean": -64.3531265258789,
+      "std": 45.370452880859375,
+      "zeros_pct": 15.312500000000002
+    },
+    {
+      "start": 93440,
+      "end": 135232,
+      "size": 41792,
+      "mean": 2.349851608276367,
+      "std": 76.17815399169922,
+      "zeros_pct": 4.93156584992343
+    },
+    {
+      "start": 135552,
+      "end": 136384,
+      "size": 832,
+      "mean": 29.139423370361328,
+      "std": 43.92070770263672,
+      "zeros_pct": 52.88461538461539
+    },
+    {
+      "start": 136640,
+      "end": 137472,
+      "size": 832,
+      "mean": 28.566104888916016,
+      "std": 44.88315963745117,
+      "zeros_pct": 50.96153846153846
+    },
+    {
+      "start": 137792,
+      "end": 139200,
+      "size": 1408,
+      "mean": 32.1839485168457,
+      "std": 44.73715591430664,
+      "zeros_pct": 47.44318181818182
+    },
+    {
+      "start": 139456,
+      "end": 143552,
+      "size": 4096,
+      "mean": 31.937744140625,
+      "std": 44.7644157409668,
+      "zeros_pct": 46.7529296875
+    },
+    {
+      "start": 143808,
+      "end": 146304,
+      "size": 2496,
+      "mean": 32.50720977783203,
+      "std": 46.414546966552734,
+      "zeros_pct": 44.99198717948718
+    },
+    {
+      "start": 146624,
+      "end": 147392,
+      "size": 768,
+      "mean": 35.078125,
+      "std": 47.20107650756836,
+      "zeros_pct": 42.44791666666667
+    },
+    {
+      "start": 147712,
+      "end": 148416,
+      "size": 704,
+      "mean": 38.5894889831543,
+      "std": 47.02287673950195,
+      "zeros_pct": 40.05681818181818
+    },
+    {
+      "start": 148736,
+      "end": 149760,
+      "size": 1024,
+      "mean": 31.2265625,
+      "std": 46.149288177490234,
+      "zeros_pct": 45.41015625
+    },
+    {
+      "start": 150016,
+      "end": 151040,
+      "size": 1024,
+      "mean": 30.8701171875,
+      "std": 45.81520462036133,
+      "zeros_pct": 46.09375
+    },
+    {
+      "start": 151872,
+      "end": 153644,
+      "size": 1772,
+      "mean": 29.52878189086914,
+      "std": 45.52989959716797,
+      "zeros_pct": 47.00902934537246
+    }
+  ],
+  "quantization_scales": [
+    {
+      "offset": 3536,
+      "values": [
+        0.023556670174002647,
+        0.023556670174002647,
+        0.10354071110486984,
+        0.10354071110486984
+      ]
+    },
+    {
+      "offset": 4840,
+      "values": [
+        0.02370227314531803,
+        0.02370227314531803,
+        0.044595859944820404,
+        0.044595859944820404
+      ]
+    },
+    {
+      "offset": 6076,
+      "values": [
+        0.026028096675872803,
+        0.026028096675872803,
+        0.04052571952342987,
+        0.04052571952342987
+      ]
+    },
+    {
+      "offset": 7312,
+      "values": [
+        0.03627581521868706,
+        0.03627581521868706,
+        0.027327680960297585,
+        0.027327680960297585
+      ]
+    },
+    {
+      "offset": 8548,
+      "values": [
+        0.054869070649147034,
+        0.054869070649147034,
+        0.02243286930024624,
+        0.02243286930024624
+      ]
+    },
+    {
+      "offset": 9196,
+      "values": [
+        0.007752098608762026,
+        0.007752098608762026
+      ]
+    },
+    {
+      "offset": 10052,
+      "values": [
+        0.007842488586902618,
+        0.007842488586902618
+      ]
+    },
+    {
+      "offset": 14148,
+      "values": [
+        0.23669970035552979,
+        0.15648698806762695
+      ]
+    },
+    {
+      "offset": 14764,
+      "values": [
+        0.23669970035552979,
+        0.15648698806762695
+      ]
+    },
+    {
+      "offset": 16052,
+      "values": [
+        0.014797080308198929,
+        0.2387024313211441
+      ]
+    },
+    {
+      "offset": 16088,
+      "values": [
+        0.014797080308198929,
+        0.2387024313211441
+      ]
+    },
+    {
+      "offset": 16952,
+      "values": [
+        0.014797080308198929,
+        0.2387024313211441
+      ]
+    },
+    {
+      "offset": 16988,
+      "values": [
+        0.014797080308198929,
+        0.2387024313211441
+      ]
+    },
+    {
+      "offset": 17660,
+      "values": [
+        0.014797080308198929,
+        0.2387024313211441
+      ]
+    },
+    {
+      "offset": 17696,
+      "values": [
+        0.014797080308198929,
+        0.2387024313211441
+      ]
+    },
+    {
+      "offset": 17800,
+      "values": [
+        0.014797080308198929,
+        0.2387024313211441
+      ]
+    },
+    {
+      "offset": 17832,
+      "values": [
+        0.014797080308198929,
+        0.2387024313211441
+      ]
+    },
+    {
+      "offset": 17852,
+      "values": [
+        0.014797080308198929,
+        0.2387024313211441
+      ]
+    },
+    {
+      "offset": 17888,
+      "values": [
+        0.014797080308198929,
+        0.2387024313211441
+      ]
+    },
+    {
+      "offset": 18676,
+      "values": [
+        0.014797080308198929,
+        0.2387024313211441
+      ]
+    },
+    {
+      "offset": 18712,
+      "values": [
+        0.014797080308198929,
+        0.2387024313211441
+      ]
+    },
+    {
+      "offset": 19368,
+      "values": [
+        0.014797080308198929,
+        0.2387024313211441
+      ]
+    },
+    {
+      "offset": 19732,
+      "values": [
+        0.23669970035552979,
+        0.15648698806762695
+      ]
+    },
+    {
+      "offset": 21852,
+      "values": [
+        0.014797080308198929,
+        0.2387024313211441
+      ]
+    },
+    {
+      "offset": 22216,
+      "values": [
+        0.23669970035552979,
+        0.15648698806762695
+      ]
+    },
+    {
+      "offset": 22648,
+      "values": [
+        0.014797080308198929,
+        0.2387024313211441
+      ]
+    },
+    {
+      "offset": 23012,
+      "values": [
+        0.23669970035552979,
+        0.15648698806762695
+      ]
+    },
+    {
+      "offset": 23472,
+      "values": [
+        0.014797080308198929,
+        0.2387024313211441
+      ]
+    },
+    {
+      "offset": 23872,
+      "values": [
+        0.23669970035552979,
+        0.15648698806762695
+      ]
+    },
+    {
+      "offset": 24664,
+      "values": [
+        0.23669970035552979,
+        0.15648698806762695
+      ]
+    },
+    {
+      "offset": 24900,
+      "values": [
+        0.014797080308198929,
+        0.2387024313211441
+      ]
+    },
+    {
+      "offset": 25104,
+      "values": [
+        0.014797080308198929,
+        0.2387024313211441
+      ]
+    },
+    {
+      "offset": 25140,
+      "values": [
+        0.014797080308198929,
+        0.2387024313211441
+      ]
+    },
+    {
+      "offset": 25176,
+      "values": [
+        0.014797080308198929,
+        0.2387024313211441
+      ]
+    },
+    {
+      "offset": 25552,
+      "values": [
+        0.15648820996284485,
+        0.15648698806762695
+      ]
+    },
+    {
+      "offset": 25796,
+      "values": [
+        0.014797080308198929,
+        0.2387024313211441
+      ]
+    },
+    {
+      "offset": 26404,
+      "values": [
+        0.15648820996284485,
+        0.15648698806762695
+      ]
+    },
+    {
+      "offset": 26648,
+      "values": [
+        0.014797080308198929,
+        0.2387024313211441
+      ]
+    },
+    {
+      "offset": 26852,
+      "values": [
+        0.014797080308198929,
+        0.2387024313211441
+      ]
+    },
+    {
+      "offset": 27256,
+      "values": [
+        0.15648820996284485,
+        0.15648698806762695
+      ]
+    },
+    {
+      "offset": 28208,
+      "values": [
+        -0.0047942898236215115,
+        0.2016436755657196
+      ]
+    },
+    {
+      "offset": 29176,
+      "values": [
+        0.16666670143604279,
+        0.0416666716337204,
+        0.00833333283662796,
+        0.0013888890389353037
+      ]
+    },
+    {
+      "offset": 29268,
+      "values": [
+        0.16666670143604279,
+        0.0416666716337204,
+        0.00833333283662796,
+        0.0013888890389353037
+      ]
+    },
+    {
+      "offset": 29376,
+      "values": [
+        0.16666670143604279,
+        0.0416666716337204,
+        0.00833333283662796,
+        0.0013888890389353037
+      ]
+    }
+  ],
+  "layer_weights": {
+    "layer_46": {
+      "type": "GRU_bidir",
+      "expected_size": 12672,
+      "region_idx": 0,
+      "actual_size": 12864,
+      "offset": 0
+    },
+    "layer_37": {
+      "type": "GRU",
+      "expected_size": 6336,
+      "region_idx": 19,
+      "actual_size": 4096,
+      "offset": 139456
+    },
+    "layer_4": {
+      "type": "Feature",
+      "expected_size": 4128,
+      "region_idx": 9,
+      "actual_size": 3648,
+      "offset": 76288
+    },
+    "layer_10": {
+      "type": "Feature",
+      "expected_size": 4128,
+      "region_idx": 20,
+      "actual_size": 2496,
+      "offset": 143808
+    },
+    "layer_16": {
+      "type": "Feature",
+      "expected_size": 4128,
+      "region_idx": 10,
+      "actual_size": 2112,
+      "offset": 80640
+    },
+    "layer_22": {
+      "type": "Feature",
+      "expected_size": 4128,
+      "region_idx": 25,
+      "actual_size": 1772,
+      "offset": 151872
+    },
+    "layer_28": {
+      "type": "Feature",
+      "expected_size": 4128,
+      "region_idx": 18,
+      "actual_size": 1408,
+      "offset": 137792
+    },
+    "layer_8": {
+      "type": "Feature",
+      "expected_size": 1056,
+      "region_idx": 23,
+      "actual_size": 1024,
+      "offset": 148736
+    },
+    "layer_14": {
+      "type": "Feature",
+      "expected_size": 1056,
+      "region_idx": 24,
+      "actual_size": 1024,
+      "offset": 150016
+    },
+    "layer_20": {
+      "type": "Feature",
+      "expected_size": 1056,
+      "region_idx": 16,
+      "actual_size": 832,
+      "offset": 135552
+    },
+    "layer_26": {
+      "type": "Feature",
+      "expected_size": 1056,
+      "region_idx": 17,
+      "actual_size": 832,
+      "offset": 136640
+    },
+    "layer_32": {
+      "type": "Feature",
+      "expected_size": 1056,
+      "region_idx": 21,
+      "actual_size": 768,
+      "offset": 146624
+    },
+    "layer_35": {
+      "type": "Feature",
+      "expected_size": 1056,
+      "region_idx": 3,
+      "actual_size": 704,
+      "offset": 15616
+    },
+    "layer_41": {
+      "type": "Feature",
+      "expected_size": 1056,
+      "region_idx": 22,
+      "actual_size": 704,
+      "offset": 147712
+    },
+    "layer_44": {
+      "type": "Feature",
+      "expected_size": 1056,
+      "region_idx": 6,
+      "actual_size": 576,
+      "offset": 73472
+    },
+    "layer_58": {
+      "type": "Feature",
+      "expected_size": 1056,
+      "region_idx": 7,
+      "actual_size": 576,
+      "offset": 74496
+    },
+    "layer_63": {
+      "type": "Feature",
+      "expected_size": 1056,
+      "region_idx": 1,
+      "actual_size": 448,
+      "offset": 13568
+    },
+    "layer_68": {
+      "type": "Feature",
+      "expected_size": 1056,
+      "region_idx": 2,
+      "actual_size": 448,
+      "offset": 14592
+    },
+    "layer_73": {
+      "type": "Feature",
+      "expected_size": 1056,
+      "region_idx": 4,
+      "actual_size": 448,
+      "offset": 16640
+    },
+    "layer_78": {
+      "type": "Feature",
+      "expected_size": 1056,
+      "region_idx": 8,
+      "actual_size": 320,
+      "offset": 75520
+    },
+    "layer_2": {
+      "type": "Feature",
+      "expected_size": 288,
+      "region_idx": 11,
+      "actual_size": 320,
+      "offset": 84736
+    },
+    "layer_34": {
+      "type": "BatchNorm",
+      "expected_size": 64,
+      "region_idx": null,
+      "note": "No matching region found"
+    },
+    "layer_43": {
+      "type": "BatchNorm",
+      "expected_size": 64,
+      "region_idx": null,
+      "note": "No matching region found"
+    },
+    "layer_80": {
+      "type": "BatchNorm",
+      "expected_size": 16,
+      "region_idx": null,
+      "note": "No matching region found"
+    }
+  }
+}
