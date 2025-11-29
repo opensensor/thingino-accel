@@ -41,11 +41,19 @@ C_OBJS := $(patsubst $(SRC_DIR)/%.c,$(OBJ_DIR)/%.o,$(C_SRCS))
 CXX_SRCS := $(wildcard $(SRC_DIR)/venus/*.cpp)
 CXX_OBJS := $(patsubst $(SRC_DIR)/venus/%.cpp,$(OBJ_DIR)/venus_%.o,$(CXX_SRCS))
 
+# Mars sources
+MARS_SRCS := $(wildcard $(SRC_DIR)/mars/*.c)
+MARS_OBJS := $(patsubst $(SRC_DIR)/mars/%.c,$(OBJ_DIR)/mars_%.o,$(MARS_SRCS))
+
 ALL_OBJS := $(C_OBJS) $(CXX_OBJS)
 
-# Example programs
+# Example programs (C)
 EXAMPLES := test_init test_model_load test_inference
 EXAMPLE_BINS := $(patsubst %,$(BIN_DIR)/%,$(EXAMPLES))
+
+# Example programs (C++)
+CXX_EXAMPLES := yolo_detect
+CXX_EXAMPLE_BINS := $(patsubst %,$(BIN_DIR)/%,$(CXX_EXAMPLES))
 
 # Targets
 .PHONY: all clean lib examples install
@@ -63,6 +71,10 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.c | $(OBJ_DIR)
 # Compile C++ object files (Venus)
 $(OBJ_DIR)/venus_%.o: $(SRC_DIR)/venus/%.cpp | $(OBJ_DIR)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+# Compile Mars C files
+$(OBJ_DIR)/mars_%.o: $(SRC_DIR)/mars/%.c | $(OBJ_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
 
 # Build NNA static library (includes C++ Venus objects)
 $(LIB_NNA_STATIC): $(C_OBJS) $(CXX_OBJS) | $(LIB_DIR)
@@ -87,12 +99,24 @@ $(LIB_VENUS_SHARED): $(CXX_OBJS) $(C_OBJS) | $(LIB_DIR)
 # Build libraries (both NNA and Venus)
 lib: $(LIB_NNA_STATIC) $(LIB_NNA_SHARED) $(LIB_VENUS_STATIC) $(LIB_VENUS_SHARED)
 
-# Build examples
+# Build C examples
 $(BIN_DIR)/%: $(EXAMPLES_DIR)/%.c $(LIB_NNA_STATIC) | $(BIN_DIR)
 	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS) -lnna $(LIBS)
 	@echo "Built example: $@"
 
-examples: $(EXAMPLE_BINS)
+# Build C++ examples
+$(BIN_DIR)/yolo_detect: $(EXAMPLES_DIR)/yolo_detect.cpp $(LIB_NNA_STATIC) | $(BIN_DIR)
+	$(CXX) $(CXXFLAGS) $< -o $@ $(LDFLAGS) -lnna $(LIBS) -lm
+	@echo "Built C++ example: $@"
+
+# Build Mars test (filter out mars_test from MARS_OBJS for library)
+MARS_LIB_OBJS := $(filter-out $(OBJ_DIR)/mars_mars_test.o,$(MARS_OBJS))
+
+$(BIN_DIR)/mars_test: $(SRC_DIR)/mars/mars_test.c $(OBJ_DIR)/mars_mars_runtime.o $(LIB_NNA_STATIC) | $(BIN_DIR)
+	$(CC) $(CFLAGS) $< $(OBJ_DIR)/mars_mars_runtime.o -o $@ $(LDFLAGS) -lnna $(LIBS)
+	@echo "Built Mars test: $@"
+
+examples: $(EXAMPLE_BINS) $(CXX_EXAMPLE_BINS) $(BIN_DIR)/mars_test
 
 # Install (for cross-compilation, just copy to build dir)
 install: all

@@ -36,12 +36,21 @@ namespace venus {
  * or different signature leads to arguments being misaligned and random stack
  * data being interpreted as pointers / enum values inside the model.
  */
+/* NOTE: The DerivedMagikModel constructor signature (from symbol analysis) is:
+ *   DerivedMagikModel(void*, long long, void*, long long, void*, long long,
+ *                     MemAllocMode, ModuleMode)
+ * This appears to be 3 pairs of (pointer, size):
+ *   - (ddr_ptr, ddr_size)
+ *   - (oram_ptr, oram_size)
+ *   - (extra_ptr, extra_size)
+ */
 typedef MagikModelBase* (*CreateFunction)(
-    long long param1,
-    long long param2,
-    void *param3,
-    void *param4,
-    void *param5,
+    void *ddr_ptr,
+    long long ddr_size,
+    void *oram_ptr,
+    long long oram_size,
+    void *extra_ptr,
+    long long extra_size,
     ModelMemoryInfoManager::MemAllocMode mem_mode,
     MagikModelBase::ModuleMode module_mode);
 
@@ -49,9 +58,13 @@ typedef MagikModelBase* (*CreateFunction)(
 struct ModelLoader {
     void *dl_handle;
     MagikModelBase *model_instance;
-    
-    ModelLoader() : dl_handle(nullptr), model_instance(nullptr) {}
-    
+    void *model_data;      /* Model file loaded into DDR */
+    size_t model_data_size;
+    size_t elf_end_offset; /* Offset where ELF structure ends in the file */
+
+    ModelLoader() : dl_handle(nullptr), model_instance(nullptr),
+                    model_data(nullptr), model_data_size(0), elf_end_offset(0) {}
+
     ~ModelLoader() {
         if (model_instance) {
             delete model_instance;
@@ -59,6 +72,7 @@ struct ModelLoader {
         if (dl_handle) {
             dlclose(dl_handle);
         }
+        /* Note: model_data is in DDR and should not be freed here */
     }
 };
 
@@ -76,6 +90,37 @@ extern "C" {
 
 extern "C" {
 
+/* Helper function to find the end of ELF structure in an MGK file.
+ * Returns the offset where weight data begins, or 0 on error.
+ */
+static size_t find_elf_end(FILE *fp) {
+    /* Read ELF header to find section header table location */
+    unsigned char ehdr[52];
+    fseek(fp, 0, SEEK_SET);
+    if (fread(ehdr, 1, 52, fp) != 52) {
+        return 0;
+    }
+
+    /* Verify ELF magic */
+    if (ehdr[0] != 0x7f || ehdr[1] != 'E' || ehdr[2] != 'L' || ehdr[3] != 'F') {
+        return 0;
+    }
+
+    /* e_shoff (section header table offset) at byte 32 (32-bit little endian) */
+    uint32_t e_shoff = ehdr[32] | (ehdr[33] << 8) | (ehdr[34] << 16) | (ehdr[35] << 24);
+
+    /* e_shentsize at byte 46 */
+    uint16_t e_shentsize = ehdr[46] | (ehdr[47] << 8);
+
+    /* e_shnum at byte 48 */
+    uint16_t e_shnum = ehdr[48] | (ehdr[49] << 8);
+
+    /* ELF ends after section header table */
+    size_t elf_end = e_shoff + (e_shnum * e_shentsize);
+
+    return elf_end;
+}
+
 void* load_mgk_model(const char *path) {
     if (!path) {
         fprintf(stderr, "load_mgk_model: NULL path\n");
@@ -84,7 +129,56 @@ void* load_mgk_model(const char *path) {
 
     ModelLoader *loader = new ModelLoader();
 
-    /* Load the .mgk shared library */
+    /* Open the file and find weight data location */
+    FILE *fp = fopen(path, "rb");
+    if (!fp) {
+        fprintf(stderr, "load_mgk_model: Failed to open %s\n", path);
+        delete loader;
+        return nullptr;
+    }
+
+    fseek(fp, 0, SEEK_END);
+    size_t file_size = ftell(fp);
+
+    /* Find where ELF structure ends - weight data starts after this */
+    size_t elf_end = find_elf_end(fp);
+    if (elf_end == 0 || elf_end >= file_size) {
+        fprintf(stderr, "load_mgk_model: Failed to parse ELF structure\n");
+        fclose(fp);
+        delete loader;
+        return nullptr;
+    }
+
+    size_t weight_data_size = file_size - elf_end;
+
+    printf("load_mgk_model: File size: %zu, ELF ends at: %zu, weight data: %zu bytes\n",
+           file_size, elf_end, weight_data_size);
+    fflush(stdout);
+
+    /* Load the weight data into DDR memory */
+    fseek(fp, elf_end, SEEK_SET);
+    loader->model_data = __ddr_vbase;
+    loader->model_data_size = weight_data_size;
+
+    size_t bytes_read = fread(loader->model_data, 1, weight_data_size, fp);
+    fclose(fp);
+
+    if (bytes_read != weight_data_size) {
+        fprintf(stderr, "load_mgk_model: Failed to read weight data (got %zu, expected %zu)\n",
+                bytes_read, weight_data_size);
+        delete loader;
+        return nullptr;
+    }
+
+    /* Store the ELF end offset - we'll need this to adjust the DDR pointer */
+    loader->elf_end_offset = elf_end;
+
+    printf("load_mgk_model: Loaded %zu bytes of weight data into DDR at %p\n",
+           weight_data_size, loader->model_data);
+    printf("load_mgk_model: ELF ends at offset 0x%zx, will adjust DDR pointer\n", elf_end);
+    fflush(stdout);
+
+    /* Now load the .mgk as a shared library using dlopen */
     printf("load_mgk_model: Loading %s with dlopen...\n", path);
     fflush(stdout);
 
@@ -122,23 +216,39 @@ void* load_mgk_model(const char *path) {
     printf("Found 'create' function at %p\n", (void*)create_fn);
     fflush(stdout);
 
-    /* Call the create function to instantiate the model. We now pass
-     * a full, well-defined argument set that matches the OEM-derived
-     * signature instead of relying on an underspecified 4-arg shim.
+    /* Call the create function to instantiate the model.
+     * Based on symbol analysis, DerivedMagikModel constructor takes:
+     *   (void* ddr, long long ddr_size, void* oram, long long oram_size,
+     *    void* extra, long long extra_size, MemAllocMode, ModuleMode)
+     *
+     * The model's compiled code uses offsets relative to the file start to access
+     * parameters. Since we only loaded the weight data (which starts at elf_end_offset),
+     * we need to adjust the DDR pointer so that:
+     *   adjusted_ddr_ptr + file_offset = actual_data_location
+     *
+     * If weight data is at loader->model_data and starts at file offset elf_end_offset:
+     *   adjusted_ddr_ptr = loader->model_data - elf_end_offset
+     *
+     * This way, when the model accesses offset X (where X >= elf_end_offset),
+     * it will correctly access loader->model_data + (X - elf_end_offset).
      */
-    long long param1 = 0;
-    long long param2 = 0;
-    void *param3 = __oram_vbase;
-    void *param4 = __ddr_vbase;
-    void *param5 = nullptr;
+    void *ddr_ptr = (char*)loader->model_data - loader->elf_end_offset;
+    /* Report the full file size so the model thinks it has the whole file */
+    long long ddr_size = (long long)(loader->model_data_size + loader->elf_end_offset);
+
+    printf("load_mgk_model: Adjusted DDR pointer: %p (original: %p, offset: 0x%zx)\n",
+           ddr_ptr, loader->model_data, loader->elf_end_offset);
+    fflush(stdout);
+    void *oram_ptr = __oram_vbase;
+    long long oram_size = 384 * 1024;      /* 384 KB ORAM */
+    void *extra_ptr = nullptr;
+    long long extra_size = 0;
     ModelMemoryInfoManager::MemAllocMode mem_mode =
         ModelMemoryInfoManager::MemAllocMode::DEFAULT;
     MagikModelBase::ModuleMode module_mode = MagikModelBase::ModuleMode::NORMAL;
 
-    printf("Calling create(param1=%lld, param2=%lld, oram=%p, ddr=%p, extra=%p, mem_mode=%d, module_mode=%d)"\
-           "...\n",
-           (long long)param1, (long long)param2,
-           param3, param4, param5,
+    printf("Calling create(ddr=%p, ddr_size=%lld, oram=%p, oram_size=%lld, extra=%p, extra_size=%lld, mem_mode=%d, module_mode=%d)...\n",
+           ddr_ptr, ddr_size, oram_ptr, oram_size, extra_ptr, extra_size,
            (int)mem_mode, (int)module_mode);
     fflush(stdout);
 
@@ -146,8 +256,9 @@ void* load_mgk_model(const char *path) {
         printf("About to call create_fn...\n");
         fflush(stdout);
 
-        loader->model_instance = create_fn(param1, param2,
-                                           param3, param4, param5,
+        loader->model_instance = create_fn(ddr_ptr, ddr_size,
+                                           oram_ptr, oram_size,
+                                           extra_ptr, extra_size,
                                            mem_mode, module_mode);
 
         printf("create() returned: %p\n", (void*)loader->model_instance);

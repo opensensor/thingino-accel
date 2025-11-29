@@ -11,6 +11,7 @@
 #include <new>
 #include <cstdlib>
 #include <cstring>
+#include <cmath>
 #include <sys/mman.h>
 #include <unistd.h>
 #include <functional>
@@ -2695,6 +2696,535 @@ extern "C" void *memcpy(void *dest, const void *src, size_t n)
 	return real_memcpy(dest, src, n);
 }
 
+/*
+ * uranus namespace implementation - wraps venus implementation
+ */
+namespace magik {
+namespace uranus {
 
+/* ============ TensorX Implementation ============ */
 
+TensorX::TensorX() : dims_begin(nullptr), dims_end(nullptr), reserved0(nullptr),
+    data(nullptr), reserved1(nullptr), ref_count(0), dims_meta0(nullptr),
+    dims_meta1(nullptr), dims_meta2(nullptr), align(64),
+    dtype(DataType::UINT8), format(TensorFormat::NHWC), bytes(0),
+    owns_data(0), reserved3(0), data_offset(0), reserved4(0) {
+}
 
+TensorX::~TensorX() {
+    if (owns_data && data) {
+        free(data);
+        data = nullptr;
+    }
+    if (dims_begin) {
+        delete[] dims_begin;
+        dims_begin = nullptr;
+        dims_end = nullptr;
+    }
+}
+
+int TensorX::step(int dim) const {
+    if (!dims_begin || !dims_end || dim < 0) return 0;
+    int ndims = dims_end - dims_begin;
+    if (dim >= ndims) return 0;
+
+    int step = 1;
+    for (int i = dim + 1; i < ndims; i++) {
+        step *= dims_begin[i];
+    }
+    return step;
+}
+
+size_t TensorX::get_bytes_size() const {
+    return bytes;
+}
+
+void* TensorX::pdata() const {
+    return data;
+}
+
+int TensorX::malloc_mbo(unsigned int size, bool use_oram) {
+    if (data && owns_data) {
+        free(data);
+    }
+    data = malloc(size);
+    if (data) {
+        bytes = size;
+        owns_data = 1;
+        return 0;
+    }
+    return -1;
+}
+
+void TensorX::free_mbo() {
+    if (data && owns_data) {
+        free(data);
+        data = nullptr;
+        owns_data = 0;
+    }
+}
+
+/* ============ TensorXWrapper Implementation ============ */
+
+TensorXWrapper::TensorXWrapper() : tensorx(nullptr), flush_status(0) {}
+
+TensorXWrapper::TensorXWrapper(TensorX *tx) : tensorx(tx), flush_status(0) {}
+
+TensorXWrapper::~TensorXWrapper() {}
+
+TensorX* TensorXWrapper::get_content() const {
+    return tensorx;
+}
+
+void TensorXWrapper::set_content(TensorX *tx) {
+    tensorx = tx;
+}
+
+std::string TensorXWrapper::get_name() const {
+    return name;
+}
+
+/* ============ MagikLayerBase Implementation ============ */
+
+MagikLayerBase::MagikLayerBase() : layer_id_(0) {}
+
+MagikLayerBase::~MagikLayerBase() {}
+
+void MagikLayerBase::set_inputs(std::vector<TensorXWrapper*> inputs) {
+    inputs_ = inputs;
+}
+
+void MagikLayerBase::set_outputs(std::vector<TensorXWrapper*> outputs) {
+    outputs_ = outputs;
+}
+
+void MagikLayerBase::_flush_cache(std::vector<TensorXWrapper*> tensors) {
+    /* Flush cache for each tensor - stub implementation */
+    (void)tensors;
+}
+
+std::vector<TensorXWrapper*> MagikLayerBase::get_inputs() const {
+    return inputs_;
+}
+
+std::vector<TensorXWrapper*> MagikLayerBase::get_outputs() const {
+    return outputs_;
+}
+
+std::vector<TensorXWrapper*> MagikLayerBase::get_input_wrappers() const {
+    return inputs_;
+}
+
+std::vector<TensorXWrapper*> MagikLayerBase::get_output_wrappers() const {
+    return outputs_;
+}
+
+std::string MagikLayerBase::get_name() const {
+    return name_;
+}
+
+std::string MagikLayerBase::get_type() const {
+    return type_;
+}
+
+int MagikLayerBase::get_layer_id() const {
+    return layer_id_;
+}
+
+int MagikLayerBase::forward() {
+    return 0;
+}
+
+/* ============ MagikModelBase::PyramidConfig Implementation ============ */
+
+TensorXWrapper* MagikModelBase::PyramidConfig::get_tensor_wrapper(std::string &name) const {
+    for (auto *tw : tensors_) {
+        if (tw && tw->name == name) {
+            return tw;
+        }
+    }
+    return nullptr;
+}
+
+/* ============ MagikModelBase Implementation ============ */
+
+MagikModelBase::MagikModelBase(long long forward_mem_size, long long param2,
+                               void *&ddr_ptr, void *oram_ptr,
+                               ModelMemoryInfoManager::MemAllocMode alloc_mode,
+                               ModuleMode module_mode)
+    : venus_impl_(nullptr), main_pyramid_config_(nullptr),
+      oram_addr_(oram_ptr), oram_size_(0) {
+    fprintf(stderr, "[uranus::MagikModelBase] Constructor called\n");
+    fprintf(stderr, "  forward_mem_size=%lld, param2=%lld\n", forward_mem_size, param2);
+    fprintf(stderr, "  ddr_ptr=%p, oram_ptr=%p\n", ddr_ptr, oram_ptr);
+    fprintf(stderr, "  alloc_mode=%d, module_mode=%d\n", (int)alloc_mode, (int)module_mode);
+
+    /* Map uranus enums to venus enums */
+    venus::ModelMemoryInfoManager::MemAllocMode v_alloc =
+        static_cast<venus::ModelMemoryInfoManager::MemAllocMode>((int)alloc_mode);
+    venus::MagikModelBase::ModuleMode v_mode =
+        static_cast<venus::MagikModelBase::ModuleMode>((int)module_mode);
+
+    /* Create the venus implementation */
+    venus_impl_ = new venus::MagikModelBase(forward_mem_size, param2, ddr_ptr, oram_ptr,
+                                             v_alloc, v_mode);
+}
+
+MagikModelBase::~MagikModelBase() {
+    fprintf(stderr, "[uranus::MagikModelBase] Destructor called\n");
+    for (auto *cfg : pyramid_configs_) {
+        delete cfg;
+    }
+    delete venus_impl_;
+}
+
+void MagikModelBase::run() {
+    fprintf(stderr, "[uranus::MagikModelBase] run() called\n");
+    if (venus_impl_) {
+        venus_impl_->run();
+    }
+}
+
+void MagikModelBase::reshape() {
+    fprintf(stderr, "[uranus::MagikModelBase] reshape() called\n");
+    if (venus_impl_) {
+        venus_impl_->reshape();
+    }
+}
+
+void MagikModelBase::alloc_forward_memory() {
+    fprintf(stderr, "[uranus::MagikModelBase] alloc_forward_memory() called\n");
+    /* Memory allocation is handled in constructor */
+}
+
+void MagikModelBase::free_forward_memory() {
+    fprintf(stderr, "[uranus::MagikModelBase] free_forward_memory() called\n");
+    if (venus_impl_) {
+        venus_impl_->free_forward_memory();
+    }
+}
+
+void MagikModelBase::free_inputs_memory() {
+    fprintf(stderr, "[uranus::MagikModelBase] free_inputs_memory() called\n");
+    if (venus_impl_) {
+        venus_impl_->free_inputs_memory();
+    }
+}
+
+MagikModelBase::PyramidConfig* MagikModelBase::create_and_add_pyramid_config() {
+    fprintf(stderr, "[uranus::MagikModelBase] create_and_add_pyramid_config() called\n");
+    PyramidConfig *cfg = new PyramidConfig();
+    pyramid_configs_.push_back(cfg);
+    if (!main_pyramid_config_) {
+        main_pyramid_config_ = cfg;
+    }
+    return cfg;
+}
+
+void MagikModelBase::set_main_pyramid_config(int level) {
+    fprintf(stderr, "[uranus::MagikModelBase] set_main_pyramid_config(%d) called\n", level);
+    if (level >= 0 && level < (int)pyramid_configs_.size()) {
+        main_pyramid_config_ = pyramid_configs_[level];
+    }
+}
+
+int MagikModelBase::build_tensors(PyramidConfig *config, std::vector<TensorInfo> infos) {
+    fprintf(stderr, "[uranus::MagikModelBase] build_tensors() called with %zu infos\n", infos.size());
+
+    if (!config) {
+        fprintf(stderr, "[uranus::MagikModelBase] build_tensors: config is NULL!\n");
+        return -1;
+    }
+
+    for (size_t idx = 0; idx < infos.size(); idx++) {
+        const auto &info = infos[idx];
+
+        fprintf(stderr, "[uranus::build_tensors] tensor[%zu]: name='%s', is_input=%d, is_output=%d, shape.size=%zu\n",
+                idx, info.name.c_str(), info.is_input, info.is_output, info.shape.size());
+
+        TensorX *tx = new TensorX();
+
+        /* Set up dimensions - handle empty shape */
+        int ndims = info.shape.size();
+        if (ndims > 0) {
+            tx->dims_begin = new int32_t[ndims];
+            tx->dims_end = tx->dims_begin + ndims;
+            for (int i = 0; i < ndims; i++) {
+                tx->dims_begin[i] = info.shape[i];
+            }
+
+            /* Calculate size */
+            size_t elem_count = 1;
+            for (int d : info.shape) {
+                if (d > 0) elem_count *= d;
+            }
+            tx->bytes = elem_count; /* Assume UINT8 by default */
+        } else {
+            tx->dims_begin = nullptr;
+            tx->dims_end = nullptr;
+            tx->bytes = 0;
+        }
+
+        TensorXWrapper *tw = new TensorXWrapper(tx);
+        tw->name = info.name;
+        config->tensors_.push_back(tw);
+
+        if (info.is_input) {
+            if (!info.name.empty()) {
+                config->input_tensors_[info.name] = tw;
+            }
+            inputs_.push_back(tw);
+        }
+        if (info.is_output) {
+            if (!info.name.empty()) {
+                config->output_tensors_[info.name] = tw;
+            }
+            outputs_.push_back(tw);
+        }
+    }
+    fprintf(stderr, "[uranus::MagikModelBase] build_tensors() complete: %zu inputs, %zu outputs\n",
+            inputs_.size(), outputs_.size());
+    return 0;
+}
+
+TensorXWrapper* MagikModelBase::get_input(std::string &name) const {
+    for (auto *tw : inputs_) {
+        if (tw && tw->name == name) return tw;
+    }
+    return nullptr;
+}
+
+TensorXWrapper* MagikModelBase::get_input(int index) const {
+    if (index >= 0 && index < (int)inputs_.size()) {
+        return inputs_[index];
+    }
+    return nullptr;
+}
+
+TensorXWrapper* MagikModelBase::get_output(std::string &name) const {
+    for (auto *tw : outputs_) {
+        if (tw && tw->name == name) return tw;
+    }
+    return nullptr;
+}
+
+TensorXWrapper* MagikModelBase::get_output(int index) const {
+    if (index >= 0 && index < (int)outputs_.size()) {
+        return outputs_[index];
+    }
+    return nullptr;
+}
+
+std::string MagikModelBase::get_input_names() const {
+    std::string result;
+    for (size_t i = 0; i < inputs_.size(); i++) {
+        if (i > 0) result += ",";
+        if (inputs_[i]) result += inputs_[i]->name;
+    }
+    return result;
+}
+
+std::string MagikModelBase::get_output_names() const {
+    std::string result;
+    for (size_t i = 0; i < outputs_.size(); i++) {
+        if (i > 0) result += ",";
+        if (outputs_[i]) result += outputs_[i]->name;
+    }
+    return result;
+}
+
+size_t MagikModelBase::get_forward_memory_size() const {
+    if (venus_impl_) {
+        return venus_impl_->get_forward_memory_size();
+    }
+    return 0;
+}
+
+void* MagikModelBase::get_oram_address() const {
+    return oram_addr_;
+}
+
+void MagikModelBase::set_oram_address(void *addr, long long size) const {
+    fprintf(stderr, "[uranus::MagikModelBase] set_oram_address(%p, %lld) called\n", addr, size);
+    if (venus_impl_) {
+        venus_impl_->set_oram_address(addr, size);
+    }
+}
+
+void MagikModelBase::update_cache_buffer_ptr(std::vector<MagikLayerBase*> layers, void *ptr) {
+    fprintf(stderr, "[uranus::MagikModelBase] update_cache_buffer_ptr() called\n");
+    (void)layers;
+    (void)ptr;
+}
+
+void MagikModelBase::update_ddr_root_ptr(std::vector<MagikLayerBase*> layers, void *ptr) {
+    fprintf(stderr, "[uranus::MagikModelBase] update_ddr_root_ptr(layers.size=%zu, ptr=%p) called\n",
+            layers.size(), ptr);
+
+    /* The model's MagikKernelLayer class has its own update_ddr_root_ptr(void*) method.
+     * We need to call it on each layer. Since MagikKernelLayer is defined in the model
+     * (not in our library), we need to use the symbol from the model.
+     *
+     * The MagikKernelLayer::update_ddr_root_ptr function is at a known offset in the model.
+     * We can call it directly using a function pointer.
+     */
+    typedef void (*LayerUpdateFunc)(void* layer, void* ptr);
+
+    /* Look up the MagikKernelLayer::update_ddr_root_ptr symbol */
+    void *sym = dlsym(RTLD_DEFAULT, "_ZN5magik6uranus16MagikKernelLayer19update_ddr_root_ptrEPv");
+    if (!sym) {
+        fprintf(stderr, "[uranus::MagikModelBase] update_ddr_root_ptr: Could not find MagikKernelLayer::update_ddr_root_ptr symbol\n");
+        return;
+    }
+
+    LayerUpdateFunc update_func = (LayerUpdateFunc)sym;
+    fprintf(stderr, "[uranus::MagikModelBase] update_ddr_root_ptr: Found layer update function at %p\n", sym);
+
+    for (size_t i = 0; i < layers.size(); i++) {
+        MagikLayerBase *layer = layers[i];
+        if (layer) {
+            fprintf(stderr, "[uranus::MagikModelBase] update_ddr_root_ptr: Updating layer %zu at %p\n", i, (void*)layer);
+            update_func((void*)layer, ptr);
+        }
+    }
+
+    fprintf(stderr, "[uranus::MagikModelBase] update_ddr_root_ptr: Updated %zu layers\n", layers.size());
+}
+
+/* ============ Helper Functions ============ */
+
+void magik_set_tensorX(TensorX &tensor, std::string name, std::string dtype_str,
+                       std::vector<int> shape, void *data, Device device) {
+    (void)name;
+    (void)device;
+
+    /* Set dimensions */
+    int ndims = shape.size();
+    if (tensor.dims_begin) delete[] tensor.dims_begin;
+    tensor.dims_begin = new int32_t[ndims];
+    tensor.dims_end = tensor.dims_begin + ndims;
+    for (int i = 0; i < ndims; i++) {
+        tensor.dims_begin[i] = shape[i];
+    }
+
+    /* Set data type - use function pointer to disambiguate */
+    DataType (*fn)(const std::string&) = utils::string2data_type;
+    tensor.dtype = fn(dtype_str);
+
+    /* Set data pointer */
+    tensor.data = data;
+
+    /* Calculate size */
+    size_t elem_count = 1;
+    for (int d : shape) elem_count *= d;
+    int bits = utils::data_type2bits(tensor.dtype);
+    tensor.bytes = (elem_count * bits + 7) / 8;
+}
+
+/* ============ AIE Functions ============ */
+
+namespace aie {
+
+float banker_round(float val) {
+    float floor_val = floorf(val);
+    float diff = val - floor_val;
+
+    if (diff < 0.5f) return floor_val;
+    if (diff > 0.5f) return floor_val + 1.0f;
+
+    /* Exactly 0.5 - round to even */
+    int floor_int = (int)floor_val;
+    return (floor_int % 2 == 0) ? floor_val : floor_val + 1.0f;
+}
+
+/* Precomputed activation tables */
+float param_sigmoid[256];
+float param_tanh[256];
+float param_swish[256];
+
+/* Static initializer to populate tables */
+static struct AIETableInit {
+    AIETableInit() {
+        for (int i = 0; i < 256; i++) {
+            /* Map [0,255] to [-8, 8] range for activations */
+            float x = (i - 128) / 16.0f;
+            param_sigmoid[i] = 1.0f / (1.0f + expf(-x));
+            param_tanh[i] = tanhf(x);
+            param_swish[i] = x * param_sigmoid[i];
+        }
+    }
+} aie_table_init;
+
+} // namespace aie
+
+/* Utils namespace implementations for uranus */
+namespace utils {
+
+std::string data_type2string(DataType dtype) {
+    return venus::utils::data_type2string(static_cast<venus::DataType>((int)dtype));
+}
+
+int data_type2bits(DataType dtype) {
+    return venus::utils::data_type2bits(static_cast<venus::DataType>((int)dtype));
+}
+
+int data_type2validbits(DataType dtype) {
+    return venus::utils::data_type2validbits(static_cast<venus::DataType>((int)dtype));
+}
+
+DataType string2data_type(const std::string &str) {
+    venus::DataType (*fn)(const std::string&) = venus::utils::string2data_type;
+    return static_cast<DataType>((int)fn(str));
+}
+
+DataType string2data_type(std::string str) {
+    venus::DataType (*fn)(std::string) = venus::utils::string2data_type;
+    return static_cast<DataType>((int)fn(str));
+}
+
+std::string data_format2string(DataFormat fmt) {
+    return venus::utils::data_format2string(static_cast<venus::TensorFormat>((int)fmt));
+}
+
+/* Note: TensorFormat is alias for DataFormat, so no separate overload needed */
+
+DataFormat string2data_format(const std::string &str) {
+    venus::TensorFormat (*fn)(const std::string&) = venus::utils::string2data_format;
+    return static_cast<DataFormat>((int)fn(str));
+}
+
+DataFormat string2data_format(std::string str) {
+    venus::TensorFormat (*fn)(std::string) = venus::utils::string2data_format;
+    return static_cast<DataFormat>((int)fn(str));
+}
+
+int string2channel_layout(const std::string &str) {
+    /* Use function pointer to disambiguate overload */
+    venus::ChannelLayout (*fn)(const std::string&) = venus::utils::string2channel_layout;
+    return static_cast<int>(fn(str));
+}
+
+int string2channel_layout(std::string str) {
+    /* Use function pointer to disambiguate overload */
+    venus::ChannelLayout (*fn)(std::string) = venus::utils::string2channel_layout;
+    return static_cast<int>(fn(str));
+}
+
+Device string2device(std::string str) {
+    if (str == "nna" || str == "NNA") return Device::NNA;
+    return Device::CPU;
+}
+
+template<> DataType type2data_type<float>() { return DataType::FLOAT32; }
+template<> DataType type2data_type<int>() { return DataType::INT32; }
+template<> DataType type2data_type<unsigned int>() { return DataType::UINT32; }
+template<> DataType type2data_type<short>() { return DataType::INT16; }
+template<> DataType type2data_type<unsigned short>() { return DataType::UINT16; }
+template<> DataType type2data_type<signed char>() { return DataType::INT8; }
+template<> DataType type2data_type<unsigned char>() { return DataType::UINT8; }
+template<> DataType type2data_type<bool>() { return DataType::BOOL; }
+
+} // namespace utils
+
+} // namespace uranus
+} // namespace magik

@@ -286,5 +286,251 @@ private:
 } // namespace venus
 } // namespace magik
 
+/*
+ * uranus namespace declarations - for compatibility with newer MGK models
+ * These must be separate classes/types (not using declarations) to get
+ * proper name mangling that matches what .mgk models expect.
+ */
+namespace magik {
+namespace uranus {
+
+/* Forward declarations */
+class TensorXWrapper;
+class MagikLayerBase;
+class MagikModelBase;
+struct TensorX;
+
+/* DataType enum for uranus namespace */
+enum class DataType : int {
+    UNKNOWN = 0,
+    FLOAT32 = 1,
+    FLOAT16 = 2,
+    INT32 = 3,
+    UINT32 = 4,
+    INT16 = 5,
+    UINT16 = 6,
+    INT8 = 7,
+    UINT8 = 8,
+    BOOL = 9,
+};
+
+/* DataFormat/TensorFormat for uranus namespace */
+enum class DataFormat : int {
+    UNKNOWN = 0,
+    NCHW = 1,
+    NHWC = 2,
+    NC4HW4 = 3,
+};
+
+using TensorFormat = DataFormat;
+
+/* Device enum */
+enum class Device : int {
+    CPU = 0,
+    NNA = 1,
+};
+
+/* DataLocation enum */
+enum class DataLocation : int {
+    DDR = 0,
+    ORAM = 1,
+};
+
+/* ModelMemoryInfoManager - duplicate definition for proper mangling */
+class ModelMemoryInfoManager {
+public:
+    enum class MemAllocMode : int {
+        DDR_ONLY = 0,
+        ORAM_FIRST = 1,
+        ORAM_ONLY = 2,
+    };
+};
+
+/* TensorX structure for uranus namespace */
+struct TensorX {
+    int32_t *dims_begin;
+    int32_t *dims_end;
+    void    *reserved0;
+    void    *data;
+    void    *reserved1;
+    int32_t  ref_count;
+    void    *dims_meta0;
+    void    *dims_meta1;
+    void    *dims_meta2;
+    uint32_t align;
+    DataType dtype;
+    TensorFormat format;
+    uint32_t bytes;
+    uint32_t owns_data;
+    int32_t  reserved3;
+    uint32_t data_offset;
+    int32_t  reserved4;
+
+    TensorX();
+    ~TensorX();
+
+    int step(int dim) const;
+    size_t get_bytes_size() const;
+    void* pdata() const;
+    int malloc_mbo(unsigned int size, bool use_oram);
+    void free_mbo();
+};
+
+/* TensorXWrapper for uranus namespace */
+class TensorXWrapper {
+public:
+    TensorX *tensorx;
+    std::string name;
+    int flush_status;
+
+    TensorXWrapper();
+    TensorXWrapper(TensorX *tx);
+    ~TensorXWrapper();
+
+    TensorX* get_content() const;
+    void set_content(TensorX *tx);
+    std::string get_name() const;
+};
+
+/* TensorInfo for uranus namespace */
+struct TensorInfo {
+    std::string name;
+    uint8_t is_input;
+    uint8_t is_output;
+    uint8_t reserved0[2];
+    std::string layout;
+    std::string dtype_str;
+    std::vector<int32_t> shape;
+    int32_t stride;
+    int32_t some_flag;
+    int32_t offset;
+    int32_t field_64;
+    int32_t field_68;
+    int32_t field_6c;
+};
+
+/* MagikLayerBase for uranus namespace */
+class MagikLayerBase {
+public:
+    MagikLayerBase();
+    virtual ~MagikLayerBase();
+
+    virtual void set_inputs(std::vector<TensorXWrapper*> inputs);
+    virtual void set_outputs(std::vector<TensorXWrapper*> outputs);
+    virtual void _flush_cache(std::vector<TensorXWrapper*> tensors);
+    virtual std::vector<TensorXWrapper*> get_inputs() const;
+    virtual std::vector<TensorXWrapper*> get_outputs() const;
+    virtual std::vector<TensorXWrapper*> get_input_wrappers() const;
+    virtual std::vector<TensorXWrapper*> get_output_wrappers() const;
+    virtual std::string get_name() const;
+    virtual std::string get_type() const;
+    virtual int get_layer_id() const;
+    virtual int forward();
+
+protected:
+    std::vector<TensorXWrapper*> inputs_;
+    std::vector<TensorXWrapper*> outputs_;
+    int layer_id_;
+    std::string name_;
+    std::string type_;
+};
+
+/* MagikModelBase in uranus namespace */
+class MagikModelBase {
+public:
+    enum class ModuleMode : int {
+        NORMAL = 0,
+        PYRAMID = 1,
+    };
+
+    struct PyramidConfig {
+        std::vector<MagikLayerBase*> layers_;
+        std::vector<TensorXWrapper*> tensors_;
+        std::map<std::string, TensorXWrapper*> input_tensors_;
+        std::map<std::string, TensorXWrapper*> output_tensors_;
+        char reserved_[0x08];
+
+        TensorXWrapper* get_tensor_wrapper(std::string &name) const;
+    };
+
+    MagikModelBase(long long forward_mem_size, long long param2,
+                   void *&ddr_ptr, void *oram_ptr,
+                   ModelMemoryInfoManager::MemAllocMode alloc_mode,
+                   ModuleMode module_mode);
+
+    virtual ~MagikModelBase();
+
+    /* Core methods */
+    virtual void run();
+    virtual void reshape();
+    virtual void alloc_forward_memory();
+    virtual void free_forward_memory();
+    virtual void free_inputs_memory();
+
+    /* Pyramid config methods */
+    virtual PyramidConfig* create_and_add_pyramid_config();
+    virtual void set_main_pyramid_config(int level);
+    virtual int build_tensors(PyramidConfig *config, std::vector<TensorInfo> infos);
+
+    /* Tensor access methods */
+    virtual TensorXWrapper* get_input(std::string &name) const;
+    virtual TensorXWrapper* get_input(int index) const;
+    virtual TensorXWrapper* get_output(std::string &name) const;
+    virtual TensorXWrapper* get_output(int index) const;
+    virtual std::string get_input_names() const;
+    virtual std::string get_output_names() const;
+
+    /* Memory methods */
+    virtual size_t get_forward_memory_size() const;
+    virtual void* get_oram_address() const;
+    virtual void set_oram_address(void *addr, long long size) const;
+    virtual void update_cache_buffer_ptr(std::vector<MagikLayerBase*> layers, void *ptr);
+    virtual void update_ddr_root_ptr(std::vector<MagikLayerBase*> layers, void *ptr);
+
+protected:
+    venus::MagikModelBase *venus_impl_;
+    std::vector<TensorXWrapper*> inputs_;
+    std::vector<TensorXWrapper*> outputs_;
+    std::vector<PyramidConfig*> pyramid_configs_;
+    PyramidConfig *main_pyramid_config_;
+    void *oram_addr_;
+    long long oram_size_;
+};
+
+/* Helper function to set TensorX properties */
+void magik_set_tensorX(TensorX &tensor, std::string name, std::string dtype_str,
+                       std::vector<int> shape, void *data, Device device);
+
+/* AIE (Activation/Math) namespace */
+namespace aie {
+    float banker_round(float val);
+
+    /* Activation function parameter tables - these are global arrays */
+    extern float param_sigmoid[256];
+    extern float param_tanh[256];
+    extern float param_swish[256];
+} // namespace aie
+
+/* Utils namespace for uranus - provides type conversion functions */
+namespace utils {
+    std::string data_type2string(DataType dtype);
+    int data_type2bits(DataType dtype);
+    int data_type2validbits(DataType dtype);
+    DataType string2data_type(const std::string &str);
+    DataType string2data_type(std::string str);
+    std::string data_format2string(DataFormat fmt);
+    DataFormat string2data_format(const std::string &str);
+    DataFormat string2data_format(std::string str);
+    int string2channel_layout(const std::string &str);
+    int string2channel_layout(std::string str);
+    Device string2device(std::string str);
+
+    template<typename T>
+    DataType type2data_type();
+} // namespace utils
+
+} // namespace uranus
+} // namespace magik
+
 #endif /* MAGIK_MODEL_H */
 

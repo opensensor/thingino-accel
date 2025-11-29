@@ -1,0 +1,34 @@
+[package]
+name = "mars-compiler"
+version = "0.1.0"
+edition = "2021"
+description = "Compile ONNX models to Mars (.mars) format for Ingenic T41 NNA"
+authors = ["thingino-accel contributors"]
+
+[[bin]]
+name = "mars"
+path = "src/main.rs"
+
+[dependencies]
+# ONNX parsing via protobuf
+prost = "0.13"
+# CLI
+clap = { version = "4.4", features = ["derive"] }
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+# Byte order handling  
+byteorder = "1.5"
+# Progress bars
+indicatif = "0.17"
+
+[build-dependencies]
+prost-build = "0.13"
+
+[profile.release]
+lto = true
+strip = true
+

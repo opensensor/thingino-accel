@@ -233,10 +233,13 @@ int nna_init(void) {
 
     printf("NNA version: 0x%08x\n", version_info.version_buf);
 
-    /* Allocate DDR DMA memory - use available nmem size or 4MB, whichever is smaller */
+    /* Allocate DDR DMA memory - use available nmem size or 8MB, whichever is smaller.
+     * Note: The kernel driver appears to have a ~8MB limit for contiguous allocation.
+     * The model weight data (~7.5MB) fits within this limit.
+     */
     g_nna_dev.ddr_size = nmem_size;
-    if (g_nna_dev.ddr_size > 4 * 1024 * 1024) {
-        g_nna_dev.ddr_size = 4 * 1024 * 1024;  /* Cap at 4MB for now */
+    if (g_nna_dev.ddr_size > 8 * 1024 * 1024) {
+        g_nna_dev.ddr_size = 8 * 1024 * 1024;  /* Cap at 8MB */
     }
 
     struct soc_nna_buf ddr_buf;

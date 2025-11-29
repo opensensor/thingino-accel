@@ -18,14 +18,18 @@ echo ""
 
 # Detect toolchain
 if [ -z "$CROSS_COMPILE" ]; then
-    # Try to find thingino toolchain
-    if [ -d "/home/matteius/output-stable/wyze_camv4_t41nq_gc4653_atbm6062/host/bin" ]; then
+    # Try to find thingino toolchain (prefer /opt for persistence across reboots)
+    if [ -d "/opt/thingino-toolchain/host/bin" ]; then
+        export PATH="/opt/thingino-toolchain/host/bin:$PATH"
+        export CROSS_COMPILE=mipsel-linux-
+        echo -e "${YELLOW}Using thingino toolchain from /opt${NC}"
+    elif [ -d "/home/matteius/output-stable/wyze_camv4_t41nq_gc4653_atbm6062/host/bin" ]; then
         export PATH="/home/matteius/output-stable/wyze_camv4_t41nq_gc4653_atbm6062/host/bin:$PATH"
         export CROSS_COMPILE=mipsel-linux-
-        echo -e "${YELLOW}Using thingino toolchain${NC}"
+        echo -e "${YELLOW}Using thingino toolchain from home directory${NC}"
     else
         echo -e "${RED}Error: CROSS_COMPILE not set and thingino toolchain not found${NC}"
-        echo "Please set CROSS_COMPILE environment variable"
+        echo "Please set CROSS_COMPILE environment variable or install toolchain to /opt/thingino-toolchain"
         exit 1
     fi
 fi

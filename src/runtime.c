@@ -22,6 +22,7 @@ void *__ddr_pbase = NULL;
 void *__ddr_vbase = NULL;
 void *__nndma_io_vbase = NULL;
 void *__nndma_desram_vbase = NULL;
+void *__nndma_fastio_vbase = NULL;
 
 /* Global variables needed by .mgk models */
 int l2cache_size = 256 * 1024;  /* 256KB L2 cache */
@@ -95,6 +96,8 @@ int nna_runtime_init(void) {
     /* Set NNA DMA base addresses */
     __nndma_io_vbase = nna_device_get_nndma_io();
     __nndma_desram_vbase = nna_device_get_nndma_desram();
+    /* fastio is at same base as io for T41 */
+    __nndma_fastio_vbase = __nndma_io_vbase;
 
     printf("Runtime initialized:\n");
     printf("  oram_base = %p\n", oram_base);
@@ -103,6 +106,7 @@ int nna_runtime_init(void) {
     printf("  __ddr_vbase = %p\n", __ddr_vbase);
     printf("  __nndma_io_vbase = %p\n", __nndma_io_vbase);
     printf("  __nndma_desram_vbase = %p\n", __nndma_desram_vbase);
+    printf("  __nndma_fastio_vbase = %p\n", __nndma_fastio_vbase);
 
     return 0;
 }

@@ -23,6 +23,10 @@ void __aie_flushcache_dir(void *addr, size_t size, int direction);
 extern void *oram_base;
 extern void *__oram_vbase;
 extern void *__ddr_pbase;
+extern void *__ddr_vbase;
+extern void *__nndma_io_vbase;
+extern void *__nndma_desram_vbase;
+extern void *__nndma_fastio_vbase;
 
 #ifdef __cplusplus
 }
