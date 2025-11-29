@@ -136,7 +136,7 @@ impl MarsCompiler {
             tensor.ndims = input.dims.len() as u32;
             for (i, &dim) in input.dims.iter().enumerate() {
                 if i < MARS_MAX_DIMS {
-                    tensor.shape[i] = dim.max(1) as u32;
+                    tensor.shape[i] = dim.max(1) as i32;
                 }
             }
             // Input is NCHW from ONNX, convert to NHWC for NNA
@@ -187,6 +187,7 @@ impl MarsCompiler {
         Ok(())
     }
 
+    /// Create or get a feature tensor (uses NDHWC32 format for NNA)
     fn get_or_create_tensor(&mut self, name: &str) -> u32 {
         if let Some(&id) = self.tensor_map.get(name) {
             return id;
@@ -195,21 +196,73 @@ impl MarsCompiler {
         let id = self.tensors.len() as u32;
         let mut tensor = MarsTensor::new(id, name);
         tensor.dtype = if self.quantize { DataType::Int8 } else { DataType::Float32 };
-        tensor.format = DataFormat::Nhwc;
+        // Use NNA native format for features: NDHWC32 (32-channel groups)
+        tensor.format = DataFormat::Ndhwc32;
+
+        // Try to get shape from ONNX shape_info
+        if let Some(dims) = self.onnx.shape_info.get(name) {
+            tensor.ndims = dims.len() as u32;
+            for (i, &dim) in dims.iter().enumerate() {
+                if i < MARS_MAX_DIMS {
+                    tensor.shape[i] = dim.max(1) as i32;
+                }
+            }
+        }
 
         self.tensor_map.insert(name.to_string(), id);
         self.tensors.push(tensor);
         id
     }
 
-    fn add_weights(&mut self, data: &[u8]) -> (u32, u32) {
-        let offset = self.weights_data.len() as u32;
+    /// Create a weight tensor (uses NMHWSOIB2 format for NNA)
+    fn create_weight_tensor(&mut self, name: &str, out_ch: usize, in_ch: usize, kh: usize, kw: usize) -> u32 {
+        let id = self.tensors.len() as u32;
+        let mut tensor = MarsTensor::new(id, name);
+        tensor.dtype = if self.quantize { DataType::Int8 } else { DataType::Float32 };
+        // Use NNA native format for weights: NMHWSOIB2
+        tensor.format = DataFormat::Nmhwsoib2;
+        tensor.ndims = 4;
+        tensor.shape[0] = out_ch as i32;
+        tensor.shape[1] = in_ch as i32;
+        tensor.shape[2] = kh as i32;
+        tensor.shape[3] = kw as i32;
+
+        self.tensor_map.insert(name.to_string(), id);
+        self.tensors.push(tensor);
+        id
+    }
+
+    /// Update tensor shape (for output tensors computed from layer params)
+    fn update_tensor_shape(&mut self, tensor_id: u32, shape: &[i32]) {
+        if let Some(tensor) = self.tensors.get_mut(tensor_id as usize) {
+            if tensor.ndims == 0 || tensor.shape[0] == 0 {
+                tensor.ndims = shape.len() as u32;
+                for (i, &dim) in shape.iter().enumerate() {
+                    if i < MARS_MAX_DIMS {
+                        tensor.shape[i] = dim;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Get tensor shape
+    fn get_tensor_shape(&self, tensor_id: u32) -> [i32; 4] {
+        if let Some(tensor) = self.tensors.get(tensor_id as usize) {
+            [tensor.shape[0], tensor.shape[1], tensor.shape[2], tensor.shape[3]]
+        } else {
+            [0, 0, 0, 0]
+        }
+    }
+
+    fn add_weights(&mut self, data: &[u8]) -> (u64, u64) {
+        let offset = self.weights_data.len() as u64;
         self.weights_data.extend_from_slice(data);
         // Align to 4 bytes
         while self.weights_data.len() % 4 != 0 {
             self.weights_data.push(0);
         }
-        (offset, data.len() as u32)
+        (offset, data.len() as u64)
     }
 
     fn quantize_weights(&self, float_data: &[u8]) -> (Vec<u8>, f32) {
@@ -252,20 +305,30 @@ impl MarsCompiler {
         let kh = weight_tensor.dims.get(2).copied().unwrap_or(3) as u32;
         let kw = weight_tensor.dims.get(3).copied().unwrap_or(3) as u32;
 
-        // Add quantized weights
+        // Quantize and pack weights in NMHWSOIB2 format (NNA native)
         let (quant_weights, scale) = self.quantize_weights(&weight_tensor.data);
-        let (weight_offset, weight_size) = self.add_weights(&quant_weights);
 
-        // Create weight tensor in Mars
+        // Convert quantized weights from OIHW to NMHWSOIB2 packed format
+        let int8_weights: Vec<i8> = quant_weights.iter().map(|&b| b as i8).collect();
+        let packed_weights = pack_weights_nmhwsoib2(
+            &int8_weights,
+            out_ch as usize,
+            in_ch as usize,
+            kh as usize,
+            kw as usize,
+        );
+        let (weight_offset, weight_size) = self.add_weights(&packed_weights);
+
+        // Create weight tensor with NMHWSOIB2 format
         let weight_id = self.tensors.len() as u32;
         let mut w_tensor = MarsTensor::new(weight_id, weight_name);
         w_tensor.dtype = if self.quantize { DataType::Int8 } else { DataType::Float32 };
-        w_tensor.format = DataFormat::Ohwi;  // Reorder to OHWI for NNA
+        w_tensor.format = DataFormat::Nmhwsoib2;  // NNA native packed format
         w_tensor.ndims = 4;
-        w_tensor.shape[0] = out_ch;
-        w_tensor.shape[1] = kh;
-        w_tensor.shape[2] = kw;
-        w_tensor.shape[3] = in_ch;
+        w_tensor.shape[0] = out_ch as i32;
+        w_tensor.shape[1] = in_ch as i32;
+        w_tensor.shape[2] = kh as i32;
+        w_tensor.shape[3] = kw as i32;
         w_tensor.scale = scale;
         w_tensor.data_offset = weight_offset;
         w_tensor.data_size = weight_size;
@@ -282,7 +345,7 @@ impl MarsCompiler {
                 let mut b_tensor = MarsTensor::new(bid, bias_name);
                 b_tensor.dtype = if self.quantize { DataType::Int8 } else { DataType::Float32 };
                 b_tensor.ndims = 1;
-                b_tensor.shape[0] = out_ch;
+                b_tensor.shape[0] = out_ch as i32;
                 b_tensor.data_offset = bias_offset;
                 b_tensor.data_size = bias_size;
                 self.tensors.push(b_tensor);
@@ -303,6 +366,26 @@ impl MarsCompiler {
         let pads = node.get_ints("pads").map(|v| v.as_slice()).unwrap_or(&[0, 0, 0, 0]);
         let dilations = node.get_ints("dilations").map(|v| v.as_slice()).unwrap_or(&[1, 1]);
         let group = node.get_int("group").unwrap_or(1) as u32;
+
+        // Calculate output shape: out_h = (in_h + pad_top + pad_bottom - dilation*(kh-1) - 1) / stride + 1
+        let input_shape = self.get_tensor_shape(input_id);
+        let sh = strides.get(0).copied().unwrap_or(1) as i32;
+        let sw = strides.get(1).copied().unwrap_or(1) as i32;
+        let dh = dilations.get(0).copied().unwrap_or(1) as i32;
+        let dw = dilations.get(1).copied().unwrap_or(1) as i32;
+        let pad_t = pads.get(0).copied().unwrap_or(0) as i32;
+        let pad_l = pads.get(1).copied().unwrap_or(0) as i32;
+        let pad_b = pads.get(2).copied().unwrap_or(0) as i32;
+        let pad_r = pads.get(3).copied().unwrap_or(0) as i32;
+
+        // Input is NCHW in ONNX, shape[1] = C, shape[2] = H, shape[3] = W
+        let in_h = input_shape[2];
+        let in_w = input_shape[3];
+        let out_h = (in_h + pad_t + pad_b - dh * (kh as i32 - 1) - 1) / sh + 1;
+        let out_w = (in_w + pad_l + pad_r - dw * (kw as i32 - 1) - 1) / sw + 1;
+
+        // Output shape: [N, out_ch, out_h, out_w] in NCHW
+        self.update_tensor_shape(output_id, &[input_shape[0], out_ch as i32, out_h, out_w]);
 
         // Determine layer type (depthwise vs regular conv)
         let layer_type = if group > 1 && group == in_ch && group == out_ch {
@@ -359,6 +442,21 @@ impl MarsCompiler {
         let strides = node.get_ints("strides").map(|v| v.as_slice()).unwrap_or(&[2, 2]);
         let pads = node.get_ints("pads").map(|v| v.as_slice()).unwrap_or(&[0, 0, 0, 0]);
 
+        // Calculate output shape
+        let input_shape = self.get_tensor_shape(input_id);
+        let kh = kernel.get(0).copied().unwrap_or(2) as i32;
+        let kw = kernel.get(1).copied().unwrap_or(2) as i32;
+        let sh = strides.get(0).copied().unwrap_or(2) as i32;
+        let sw = strides.get(1).copied().unwrap_or(2) as i32;
+        let pad_t = pads.get(0).copied().unwrap_or(0) as i32;
+        let pad_b = pads.get(2).copied().unwrap_or(0) as i32;
+        let pad_l = pads.get(1).copied().unwrap_or(0) as i32;
+        let pad_r = pads.get(3).copied().unwrap_or(0) as i32;
+
+        let out_h = (input_shape[2] + pad_t + pad_b - kh) / sh + 1;
+        let out_w = (input_shape[3] + pad_l + pad_r - kw) / sw + 1;
+        self.update_tensor_shape(output_id, &[input_shape[0], input_shape[1], out_h, out_w]);
+
         let mut layer = MarsLayer::new(layer_id, layer_type);
         layer.num_inputs = 1;
         layer.num_outputs = 1;
@@ -366,15 +464,15 @@ impl MarsCompiler {
         layer.output_tensor_ids[0] = output_id;
 
         layer.params = LayerParams::Pool(PoolParams {
-            kernel_h: kernel.get(0).copied().unwrap_or(2) as u32,
-            kernel_w: kernel.get(1).copied().unwrap_or(2) as u32,
-            stride_h: strides.get(0).copied().unwrap_or(2) as u32,
-            stride_w: strides.get(1).copied().unwrap_or(2) as u32,
+            kernel_h: kh as u32,
+            kernel_w: kw as u32,
+            stride_h: sh as u32,
+            stride_w: sw as u32,
             padding: if pads.iter().all(|&p| p == 0) { Padding::Valid } else { Padding::Explicit },
-            pad_top: pads.get(0).copied().unwrap_or(0) as u32,
-            pad_bottom: pads.get(2).copied().unwrap_or(0) as u32,
-            pad_left: pads.get(1).copied().unwrap_or(0) as u32,
-            pad_right: pads.get(3).copied().unwrap_or(0) as u32,
+            pad_top: pad_t as u32,
+            pad_bottom: pad_b as u32,
+            pad_left: pad_l as u32,
+            pad_right: pad_r as u32,
         });
 
         self.layers.push(layer);
@@ -389,6 +487,10 @@ impl MarsCompiler {
 
         let output_name = node.outputs.get(0).context("Activation missing output")?;
         let output_id = self.get_or_create_tensor(output_name);
+
+        // Activation layers keep the same shape
+        let input_shape = self.get_tensor_shape(input_id);
+        self.update_tensor_shape(output_id, &input_shape);
 
         let mut layer = MarsLayer::new(layer_id, layer_type);
         layer.num_inputs = 1;
@@ -413,6 +515,10 @@ impl MarsCompiler {
         let output_name = node.outputs.get(0).context("Elementwise missing output")?;
         let output_id = self.get_or_create_tensor(output_name);
 
+        // Elementwise ops preserve shape (use first input's shape)
+        let input_shape = self.get_tensor_shape(input_a_id);
+        self.update_tensor_shape(output_id, &input_shape);
+
         let mut layer = MarsLayer::new(layer_id, layer_type);
         layer.num_inputs = 2;
         layer.num_outputs = 1;
@@ -433,12 +539,28 @@ impl MarsCompiler {
         layer.num_inputs = node.inputs.len().min(4) as u32;
         layer.num_outputs = 1;
 
+        // Get input shapes for concat calculation
+        let mut total_axis_size = 0i32;
+        let mut base_shape = [0i32; 4];
+
         for (i, input_name) in node.inputs.iter().take(4).enumerate() {
-            layer.input_tensor_ids[i] = self.get_or_create_tensor(input_name);
+            let tid = self.get_or_create_tensor(input_name);
+            layer.input_tensor_ids[i] = tid;
+            let shape = self.get_tensor_shape(tid);
+            if i == 0 {
+                base_shape = shape;
+            }
+            total_axis_size += shape[axis as usize];
         }
 
         let output_name = node.outputs.get(0).context("Concat missing output")?;
-        layer.output_tensor_ids[0] = self.get_or_create_tensor(output_name);
+        let output_id = self.get_or_create_tensor(output_name);
+        layer.output_tensor_ids[0] = output_id;
+
+        // Output shape: same as first input, but axis dimension is sum of all inputs
+        let mut out_shape = base_shape;
+        out_shape[axis as usize] = total_axis_size;
+        self.update_tensor_shape(output_id, &out_shape);
 
         layer.params = LayerParams::Concat(ConcatParams {
             axis,
@@ -473,6 +595,12 @@ impl MarsCompiler {
             (2, 2)
         };
 
+        // Calculate output shape
+        let input_shape = self.get_tensor_shape(input_id);
+        let out_h = input_shape[2] * scale_h as i32;
+        let out_w = input_shape[3] * scale_w as i32;
+        self.update_tensor_shape(output_id, &[input_shape[0], input_shape[1], out_h, out_w]);
+
         let mode = node.get_string("mode").unwrap_or("nearest");
         let mode_val = if mode == "bilinear" || mode == "linear" { 1 } else { 0 };
 
@@ -505,8 +633,8 @@ impl MarsCompiler {
         header.num_tensors = self.tensors.len() as u32;
         header.num_inputs = self.onnx.inputs.len() as u32;
         header.num_outputs = self.onnx.outputs.len() as u32;
-        header.weights_offset = weights_offset as u32;
-        header.weights_size = self.weights_data.len() as u32;
+        header.weights_offset = weights_offset as u64;
+        header.weights_size = self.weights_data.len() as u64;
 
         // Set input/output tensor IDs
         for (i, input) in self.onnx.inputs.iter().take(4).enumerate() {

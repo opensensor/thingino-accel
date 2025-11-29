@@ -10,6 +10,7 @@
 #include <string.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <math.h>
 
 #include "mars.h"
 #include "mars_runtime.h"
@@ -41,6 +42,7 @@ const char* mars_get_error_string(mars_error_t err) {
 }
 
 /* Calculate tensor size in bytes */
+/* Calculate tensor size based on format */
 static size_t tensor_byte_size(const mars_tensor_t *t) {
     size_t elem_size;
     switch (t->dtype) {
@@ -53,6 +55,29 @@ static size_t tensor_byte_size(const mars_tensor_t *t) {
         default: elem_size = 1;
     }
 
+    /* Handle NNA native formats */
+    if (t->format == MARS_FORMAT_NDHWC32 && t->ndims >= 4) {
+        /* NDHWC32: [N, D_C32, H, W, 32] where D_C32 = ceil(C/32) */
+        int n = t->shape[0];
+        int c = t->shape[1];  /* original channels */
+        int h = t->shape[2];
+        int w = t->shape[3];
+        int d_c32 = (c + 31) / 32;
+        return n * d_c32 * h * w * 32 * elem_size;
+    }
+
+    if (t->format == MARS_FORMAT_NMHWSOIB2 && t->ndims >= 4) {
+        /* NMHWSOIB2: packed 1024-byte blocks */
+        int out_ch = t->shape[0];
+        int in_ch = t->shape[1];
+        int kh = t->ndims > 2 ? t->shape[2] : 1;
+        int kw = t->ndims > 3 ? t->shape[3] : 1;
+        int n_ofp = (out_ch + 31) / 32;
+        int m_ifp = (in_ch + 31) / 32;
+        return n_ofp * m_ifp * kh * kw * 1024;  /* 32*32 = 1024 */
+    }
+
+    /* Standard formats */
     size_t numel = 1;
     for (uint32_t i = 0; i < t->ndims; i++) {
         numel *= t->shape[i];
@@ -155,10 +180,60 @@ mars_error_t mars_load_memory(const void *data, size_t size, mars_model_t **out_
         model->weights = model->ddr_base;
     }
 
-    /* Set up tensor data pointers */
-    uint8_t *ddr_ptr = (uint8_t *)model->ddr_base + model->weights_size;
+    /*
+     * Memory allocation strategy: Double-buffer scheme
+     * Instead of allocating all tensors, we use 2 working buffers and ping-pong.
+     * This works because most ops are: input -> output, no persistent tensors needed.
+     *
+     * Exception: Skip connections (concat, add) need inputs kept around.
+     * For now, use simple double-buffer; will need enhancement for skip connections.
+     */
     size_t ddr_remaining = model->ddr_size - model->weights_size;
+    uint8_t *ddr_ptr = (uint8_t *)model->ddr_base + model->weights_size;
 
+    /* Find max tensor size needed for working buffers */
+    size_t max_tensor_size = 0;
+    for (uint32_t i = 0; i < header.num_tensors; i++) {
+        mars_runtime_tensor_t *rt = &model->tensors[i];
+        if (rt->desc.data_size == 0) {  /* Runtime tensor, not weight */
+            size_t sz = ALIGN_UP(tensor_byte_size(&rt->desc), 64);
+            if (sz > max_tensor_size) max_tensor_size = sz;
+        }
+    }
+
+    /* Allocate two working buffers (ping-pong) plus one extra for skip connections */
+    size_t num_buffers = 3;
+    size_t buffer_size = max_tensor_size;
+    size_t total_buffer = buffer_size * num_buffers;
+
+    fprintf(stderr, "Mars: Max tensor size: %zu, buffers: %zu x %zu = %zu bytes\n",
+            max_tensor_size, num_buffers, buffer_size, total_buffer);
+
+    if (total_buffer > ddr_remaining) {
+        /* Fall back to smaller buffers or fail gracefully */
+        fprintf(stderr, "Mars: Need %zu bytes for buffers, have %zu\n",
+                total_buffer, ddr_remaining);
+        /* Try with just 2 buffers */
+        num_buffers = 2;
+        total_buffer = buffer_size * num_buffers;
+        if (total_buffer > ddr_remaining) {
+            fprintf(stderr, "Mars: Out of DDR memory (need %zu, have %zu)\n",
+                    total_buffer, ddr_remaining);
+            free(model->layers);
+            free(model->tensors);
+            free(model);
+            return MARS_ERR_ALLOC_FAILED;
+        }
+    }
+
+    /* Working buffer pointers - store in model for later use */
+    uint8_t *work_buffers[3];
+    for (size_t b = 0; b < num_buffers; b++) {
+        work_buffers[b] = ddr_ptr + b * buffer_size;
+    }
+
+    /* Assign tensors to working buffers in round-robin */
+    uint32_t buf_idx = 0;
     for (uint32_t i = 0; i < header.num_tensors; i++) {
         mars_runtime_tensor_t *rt = &model->tensors[i];
 
@@ -170,22 +245,16 @@ mars_error_t mars_load_memory(const void *data, size_t size, mars_model_t **out_
             continue;
         }
 
-        /* Allocate runtime tensor in DDR */
-        size_t needed = ALIGN_UP(tensor_byte_size(&rt->desc), 64);
-        if (needed > ddr_remaining) {
-            fprintf(stderr, "Mars: Out of DDR memory for tensor %u\n", i);
-            free(model->layers);
-            free(model->tensors);
-            free(model);
-            return MARS_ERR_ALLOC_FAILED;
-        }
-
-        rt->vaddr = ddr_ptr;
-        rt->paddr = (uint8_t *)model->ddr_paddr + (ddr_ptr - (uint8_t *)model->ddr_base);
-        rt->alloc_size = needed;
-        ddr_ptr += needed;
-        ddr_remaining -= needed;
+        /* Assign to working buffer (round-robin) */
+        rt->vaddr = (void *)work_buffers[buf_idx % num_buffers];
+        rt->paddr = (void *)((uint8_t *)model->ddr_paddr +
+                             ((uint8_t *)rt->vaddr - (uint8_t *)model->ddr_base));
+        rt->alloc_size = buffer_size;
+        buf_idx++;
     }
+
+    fprintf(stderr, "Mars: Allocated %u tensors using %zu working buffers\n",
+            header.num_tensors, num_buffers);
 
     *out_model = model;
     return MARS_OK;
@@ -436,50 +505,348 @@ static mars_error_t execute_conv2d(mars_model_t *model, mars_runtime_layer_t *la
     return MARS_OK;
 }
 
+/* Helper to get tensor by ID */
+static mars_runtime_tensor_t* get_tensor_by_id(mars_model_t *model, uint32_t id) {
+    if (id == 0xFFFFFFFF) return NULL;
+    for (uint32_t i = 0; i < model->header.num_tensors; i++) {
+        if (model->tensors[i].desc.id == id) {
+            return &model->tensors[i];
+        }
+    }
+    return NULL;
+}
+
+/* Execute Sigmoid: out = 1 / (1 + exp(-x)) */
+static mars_error_t execute_sigmoid(mars_model_t *model, mars_runtime_layer_t *layer) {
+    const mars_layer_t *desc = &layer->desc;
+
+    mars_runtime_tensor_t *input = get_tensor_by_id(model, desc->input_tensor_ids[0]);
+    mars_runtime_tensor_t *output = get_tensor_by_id(model, desc->output_tensor_ids[0]);
+    if (!input || !output || !input->vaddr || !output->vaddr) {
+        return MARS_ERR_INVALID_TENSOR;
+    }
+
+    /* Calculate number of elements */
+    size_t numel = 1;
+    for (uint32_t i = 0; i < input->desc.ndims; i++) {
+        numel *= input->desc.shape[i];
+    }
+
+    int8_t *in = (int8_t *)input->vaddr;
+    int8_t *out = (int8_t *)output->vaddr;
+    float in_scale = input->desc.scale;
+    float out_scale = output->desc.scale > 0 ? output->desc.scale : 1.0f;
+
+    for (size_t i = 0; i < numel; i++) {
+        /* Dequantize */
+        float x = in[i] * in_scale;
+        /* Sigmoid */
+        float y = 1.0f / (1.0f + expf(-x));
+        /* Requantize */
+        int32_t q = (int32_t)(y / out_scale + 0.5f);
+        if (q > 127) q = 127;
+        if (q < -128) q = -128;
+        out[i] = (int8_t)q;
+    }
+
+    return MARS_OK;
+}
+
+/* Execute element-wise Mul: out = a * b */
+static mars_error_t execute_mul(mars_model_t *model, mars_runtime_layer_t *layer) {
+    const mars_layer_t *desc = &layer->desc;
+
+    mars_runtime_tensor_t *input_a = get_tensor_by_id(model, desc->input_tensor_ids[0]);
+    mars_runtime_tensor_t *input_b = get_tensor_by_id(model, desc->input_tensor_ids[1]);
+    mars_runtime_tensor_t *output = get_tensor_by_id(model, desc->output_tensor_ids[0]);
+
+    if (!input_a || !input_b || !output) {
+        return MARS_ERR_INVALID_TENSOR;
+    }
+    if (!input_a->vaddr || !input_b->vaddr || !output->vaddr) {
+        return MARS_ERR_INVALID_TENSOR;
+    }
+
+    size_t numel = 1;
+    for (uint32_t i = 0; i < input_a->desc.ndims; i++) {
+        numel *= input_a->desc.shape[i];
+    }
+
+    int8_t *a = (int8_t *)input_a->vaddr;
+    int8_t *b = (int8_t *)input_b->vaddr;
+    int8_t *out = (int8_t *)output->vaddr;
+    float scale_a = input_a->desc.scale;
+    float scale_b = input_b->desc.scale;
+    float scale_out = output->desc.scale > 0 ? output->desc.scale : 1.0f;
+
+    for (size_t i = 0; i < numel; i++) {
+        float va = a[i] * scale_a;
+        float vb = b[i] * scale_b;
+        float y = va * vb;
+        int32_t q = (int32_t)(y / scale_out + 0.5f);
+        if (q > 127) q = 127;
+        if (q < -128) q = -128;
+        out[i] = (int8_t)q;
+    }
+
+    return MARS_OK;
+}
+
+/* Execute element-wise Add: out = a + b */
+static mars_error_t execute_add(mars_model_t *model, mars_runtime_layer_t *layer) {
+    const mars_layer_t *desc = &layer->desc;
+
+    mars_runtime_tensor_t *input_a = get_tensor_by_id(model, desc->input_tensor_ids[0]);
+    mars_runtime_tensor_t *input_b = get_tensor_by_id(model, desc->input_tensor_ids[1]);
+    mars_runtime_tensor_t *output = get_tensor_by_id(model, desc->output_tensor_ids[0]);
+
+    if (!input_a || !input_b || !output) {
+        return MARS_ERR_INVALID_TENSOR;
+    }
+    if (!input_a->vaddr || !input_b->vaddr || !output->vaddr) {
+        return MARS_ERR_INVALID_TENSOR;
+    }
+
+    size_t numel = 1;
+    for (uint32_t i = 0; i < input_a->desc.ndims; i++) {
+        numel *= input_a->desc.shape[i];
+    }
+
+    int8_t *a = (int8_t *)input_a->vaddr;
+    int8_t *b = (int8_t *)input_b->vaddr;
+    int8_t *out = (int8_t *)output->vaddr;
+    float scale_a = input_a->desc.scale;
+    float scale_b = input_b->desc.scale;
+    float scale_out = output->desc.scale > 0 ? output->desc.scale : 1.0f;
+
+    for (size_t i = 0; i < numel; i++) {
+        float va = a[i] * scale_a;
+        float vb = b[i] * scale_b;
+        float y = va + vb;
+        int32_t q = (int32_t)(y / scale_out + 0.5f);
+        if (q > 127) q = 127;
+        if (q < -128) q = -128;
+        out[i] = (int8_t)q;
+    }
+
+    return MARS_OK;
+}
+
+/* Execute MaxPool */
+static mars_error_t execute_maxpool(mars_model_t *model, mars_runtime_layer_t *layer) {
+    const mars_layer_t *desc = &layer->desc;
+    const mars_pool_params_t *params = &desc->params.pool;
+
+    mars_runtime_tensor_t *input = get_tensor_by_id(model, desc->input_tensor_ids[0]);
+    mars_runtime_tensor_t *output = get_tensor_by_id(model, desc->output_tensor_ids[0]);
+
+    if (!input || !output || !input->vaddr || !output->vaddr) {
+        return MARS_ERR_INVALID_TENSOR;
+    }
+
+    /* NHWC format */
+    int in_h = input->desc.shape[1];
+    int in_w = input->desc.shape[2];
+    int channels = input->desc.shape[3];
+    int out_h = output->desc.shape[1];
+    int out_w = output->desc.shape[2];
+
+    int kh = params->kernel_h;
+    int kw = params->kernel_w;
+    int sh = params->stride_h;
+    int sw = params->stride_w;
+
+    int8_t *in = (int8_t *)input->vaddr;
+    int8_t *out = (int8_t *)output->vaddr;
+
+    for (int c = 0; c < channels; c++) {
+        for (int oh = 0; oh < out_h; oh++) {
+            for (int ow = 0; ow < out_w; ow++) {
+                int8_t max_val = -128;
+
+                for (int khi = 0; khi < kh; khi++) {
+                    for (int kwi = 0; kwi < kw; kwi++) {
+                        int ih = oh * sh + khi;
+                        int iw = ow * sw + kwi;
+
+                        if (ih < in_h && iw < in_w) {
+                            int in_idx = ih * in_w * channels + iw * channels + c;
+                            if (in[in_idx] > max_val) {
+                                max_val = in[in_idx];
+                            }
+                        }
+                    }
+                }
+
+                int out_idx = oh * out_w * channels + ow * channels + c;
+                out[out_idx] = max_val;
+            }
+        }
+    }
+
+    return MARS_OK;
+}
+
+/* Execute Concat along channel axis */
+static mars_error_t execute_concat(mars_model_t *model, mars_runtime_layer_t *layer) {
+    const mars_layer_t *desc = &layer->desc;
+
+    mars_runtime_tensor_t *output = get_tensor_by_id(model, desc->output_tensor_ids[0]);
+    if (!output || !output->vaddr) {
+        return MARS_ERR_INVALID_TENSOR;
+    }
+
+    /* Assuming NHWC and concat along channel axis (axis=3 or -1) */
+    int out_h = output->desc.shape[1];
+    int out_w = output->desc.shape[2];
+    int8_t *out = (int8_t *)output->vaddr;
+
+    int channel_offset = 0;
+
+    for (uint32_t n = 0; n < desc->num_inputs; n++) {
+        mars_runtime_tensor_t *input = get_tensor_by_id(model, desc->input_tensor_ids[n]);
+        if (!input || !input->vaddr) continue;
+
+        int in_c = input->desc.shape[3];
+        int8_t *in = (int8_t *)input->vaddr;
+        int out_c = output->desc.shape[3];
+
+        /* Copy each channel slice */
+        for (int h = 0; h < out_h; h++) {
+            for (int w = 0; w < out_w; w++) {
+                for (int c = 0; c < in_c; c++) {
+                    int in_idx = h * out_w * in_c + w * in_c + c;
+                    int out_idx = h * out_w * out_c + w * out_c + (channel_offset + c);
+                    out[out_idx] = in[in_idx];
+                }
+            }
+        }
+        channel_offset += in_c;
+    }
+
+    return MARS_OK;
+}
+
+/* Execute Upsample (nearest neighbor) */
+static mars_error_t execute_upsample(mars_model_t *model, mars_runtime_layer_t *layer) {
+    const mars_layer_t *desc = &layer->desc;
+    const mars_upsample_params_t *params = &desc->params.upsample;
+
+    mars_runtime_tensor_t *input = get_tensor_by_id(model, desc->input_tensor_ids[0]);
+    mars_runtime_tensor_t *output = get_tensor_by_id(model, desc->output_tensor_ids[0]);
+
+    if (!input || !output || !input->vaddr || !output->vaddr) {
+        return MARS_ERR_INVALID_TENSOR;
+    }
+
+    int in_h = input->desc.shape[1];
+    int in_w = input->desc.shape[2];
+    int channels = input->desc.shape[3];
+    int out_h = output->desc.shape[1];
+    int out_w = output->desc.shape[2];
+
+    int scale_h = params->scale_h > 0 ? params->scale_h : (out_h / in_h);
+    int scale_w = params->scale_w > 0 ? params->scale_w : (out_w / in_w);
+
+    int8_t *in = (int8_t *)input->vaddr;
+    int8_t *out = (int8_t *)output->vaddr;
+
+    /* Nearest neighbor upsampling */
+    for (int oh = 0; oh < out_h; oh++) {
+        int ih = oh / scale_h;
+        if (ih >= in_h) ih = in_h - 1;
+
+        for (int ow = 0; ow < out_w; ow++) {
+            int iw = ow / scale_w;
+            if (iw >= in_w) iw = in_w - 1;
+
+            for (int c = 0; c < channels; c++) {
+                int in_idx = ih * in_w * channels + iw * channels + c;
+                int out_idx = oh * out_w * channels + ow * channels + c;
+                out[out_idx] = in[in_idx];
+            }
+        }
+    }
+
+    return MARS_OK;
+}
+
+/* Execute ReLU: out = max(0, x) */
+static mars_error_t execute_relu(mars_model_t *model, mars_runtime_layer_t *layer) {
+    const mars_layer_t *desc = &layer->desc;
+
+    mars_runtime_tensor_t *input = get_tensor_by_id(model, desc->input_tensor_ids[0]);
+    mars_runtime_tensor_t *output = get_tensor_by_id(model, desc->output_tensor_ids[0]);
+
+    if (!input || !output || !input->vaddr || !output->vaddr) {
+        return MARS_ERR_INVALID_TENSOR;
+    }
+
+    size_t numel = 1;
+    for (uint32_t i = 0; i < input->desc.ndims; i++) {
+        numel *= input->desc.shape[i];
+    }
+
+    int8_t *in = (int8_t *)input->vaddr;
+    int8_t *out = (int8_t *)output->vaddr;
+
+    for (size_t i = 0; i < numel; i++) {
+        out[i] = in[i] > 0 ? in[i] : 0;
+    }
+
+    return MARS_OK;
+}
+
 /* Layer execution dispatcher */
 static mars_error_t execute_layer(mars_model_t *model, mars_runtime_layer_t *layer) {
     const mars_layer_t *desc = &layer->desc;
 
     switch (desc->type) {
         case MARS_LAYER_CONV2D:
-            printf("  Executing Conv2D layer %u\n", desc->id);
             return execute_conv2d(model, layer);
 
         case MARS_LAYER_DEPTHWISE_CONV2D:
-            printf("  Executing DepthwiseConv2D layer %u\n", desc->id);
-            break;
+            /* TODO: implement depthwise conv */
+            return MARS_OK;
 
         case MARS_LAYER_MAXPOOL:
-            printf("  Executing MaxPool layer %u\n", desc->id);
-            break;
+            return execute_maxpool(model, layer);
 
         case MARS_LAYER_AVGPOOL:
-            printf("  Executing AvgPool layer %u\n", desc->id);
-            break;
+            /* TODO: implement avgpool */
+            return MARS_OK;
 
         case MARS_LAYER_RELU:
         case MARS_LAYER_RELU6:
-        case MARS_LAYER_SILU:
-        case MARS_LAYER_SIGMOID:
         case MARS_LAYER_LEAKY_RELU:
-            printf("  Executing Activation layer %u (type=%d)\n", desc->id, desc->type);
-            break;
+            return execute_relu(model, layer);
+
+        case MARS_LAYER_SILU:
+            /* SiLU is implemented as Sigmoid + Mul in ONNX */
+            return MARS_OK;
+
+        case MARS_LAYER_SIGMOID:
+            return execute_sigmoid(model, layer);
 
         case MARS_LAYER_CONCAT:
-            printf("  Executing Concat layer %u\n", desc->id);
-            break;
+            return execute_concat(model, layer);
 
         case MARS_LAYER_ADD:
-            printf("  Executing Add layer %u\n", desc->id);
-            break;
+            return execute_add(model, layer);
+
+        case MARS_LAYER_MUL:
+            return execute_mul(model, layer);
 
         case MARS_LAYER_UPSAMPLE:
-            printf("  Executing Upsample layer %u\n", desc->id);
-            break;
+            return execute_upsample(model, layer);
 
         case MARS_LAYER_RESHAPE:
-            printf("  Executing Reshape layer %u\n", desc->id);
-            break;
+            /* Reshape is a no-op for data, just reinterpret shape */
+            return MARS_OK;
+
+        case MARS_LAYER_SOFTMAX:
+            /* TODO: implement softmax */
+            return MARS_OK;
 
         default:
             fprintf(stderr, "Mars: Unknown layer type %d\n", desc->type);

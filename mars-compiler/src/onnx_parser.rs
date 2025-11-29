@@ -393,6 +393,7 @@ pub struct OnnxModel {
     pub outputs: Vec<TensorShape>,
     pub nodes: Vec<OnnxNode>,
     pub initializers: HashMap<String, OnnxTensor>,
+    pub shape_info: HashMap<String, Vec<i64>>,  // name -> shape for all tensors
 }
 
 impl OnnxModel {
@@ -440,6 +441,35 @@ impl OnnxModel {
             .map(|op| op.version)
             .unwrap_or(11);
 
+        // Build shape_info from all sources: inputs, outputs, value_info, initializers
+        let mut shape_info: HashMap<String, Vec<i64>> = HashMap::new();
+
+        // From inputs
+        for vi in &graph.input {
+            if let Some(shape) = TensorShape::from_value_info(vi) {
+                shape_info.insert(shape.name.clone(), shape.dims.clone());
+            }
+        }
+
+        // From outputs
+        for vi in &graph.output {
+            if let Some(shape) = TensorShape::from_value_info(vi) {
+                shape_info.insert(shape.name.clone(), shape.dims.clone());
+            }
+        }
+
+        // From value_info (intermediate tensors)
+        for vi in &graph.value_info {
+            if let Some(shape) = TensorShape::from_value_info(vi) {
+                shape_info.insert(shape.name.clone(), shape.dims.clone());
+            }
+        }
+
+        // From initializers
+        for init in &graph.initializer {
+            shape_info.insert(init.name.clone(), init.dims.clone());
+        }
+
         Ok(Self {
             name: graph.name,
             producer: proto.producer_name,
@@ -448,6 +478,7 @@ impl OnnxModel {
             outputs,
             nodes,
             initializers,
+            shape_info,
         })
     }
 

@@ -113,7 +113,7 @@ $(BIN_DIR)/yolo_detect: $(EXAMPLES_DIR)/yolo_detect.cpp $(LIB_NNA_STATIC) | $(BI
 MARS_LIB_OBJS := $(filter-out $(OBJ_DIR)/mars_mars_test.o,$(MARS_OBJS))
 
 $(BIN_DIR)/mars_test: $(SRC_DIR)/mars/mars_test.c $(OBJ_DIR)/mars_mars_runtime.o $(LIB_NNA_STATIC) | $(BIN_DIR)
-	$(CC) $(CFLAGS) $< $(OBJ_DIR)/mars_mars_runtime.o -o $@ $(LDFLAGS) -lnna $(LIBS)
+	$(CC) $(CFLAGS) $< $(OBJ_DIR)/mars_mars_runtime.o -o $@ $(LDFLAGS) -lnna $(LIBS) -lm
 	@echo "Built Mars test: $@"
 
 examples: $(EXAMPLE_BINS) $(CXX_EXAMPLE_BINS) $(BIN_DIR)/mars_test

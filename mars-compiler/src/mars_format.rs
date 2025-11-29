@@ -1,20 +1,21 @@
 //! Mars binary format definitions
 //!
-//! This matches the C structures in include/mars.h
+//! This matches the C structures in include/mars.h exactly
 
 use byteorder::{LittleEndian, WriteBytesExt};
 use std::io::{self, Write};
 
 pub const MARS_MAGIC: u32 = 0x5352414D; // "MARS" in little-endian
-pub const MARS_VERSION: u32 = 1;
-pub const MARS_MAX_DIMS: usize = 8;
-pub const MARS_MAX_NAME: usize = 64;
+pub const MARS_VERSION_MAJOR: u16 = 1;
+pub const MARS_VERSION_MINOR: u16 = 0;
+pub const MARS_MAX_DIMS: usize = 6;
+pub const MARS_MAX_NAME: usize = 60;  // 64 - 4 (id field)
 
-// Header: 76 bytes
+// Header: 76 bytes (verified with C sizeof)
 pub const HEADER_SIZE: usize = 76;
-// Tensor: 124 bytes
+// Tensor: 124 bytes (verified with C sizeof)
 pub const TENSOR_SIZE: usize = 124;
-// Layer: 112 bytes
+// Layer: 112 bytes (verified with C sizeof)
 pub const LAYER_SIZE: usize = 112;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,13 +29,19 @@ pub enum DataType {
     Uint4 = 5,
 }
 
+/// Data formats - matching NNA hardware expectations from uranus_common_type.h
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
 pub enum DataFormat {
-    Nhwc = 0,  // Height, Width, Channels
-    Nchw = 1,  // Channels, Height, Width
-    Ohwi = 2,  // Out_ch, Height, Width, In_ch (for weights)
-    Oihw = 3,  // Out_ch, In_ch, Height, Width
+    Nhwc = 0,       // Feature: [N, H, W, C] - basic layout
+    Ndhwc32 = 1,    // Feature: [N, D_C32, H, W, CHN_32] - NNA native, 32-channel groups
+    Hwio = 2,       // Weight: [H, W, I, O]
+    Nmhwsoib2 = 3,  // Weight: [N_OFP, M_IFP, H, W, S_BIT2, OFP, IFP] - NNA native packed
+    Nmc32 = 4,      // Bias/BN: [N_OFP, M_BT, CHN_32]
+    D1 = 5,         // Scale/LUT: [d1]
+    Ohwi = 6,       // Weight: [O, H, W, I]
+    Nchw = 7,       // Feature: [N, C, H, W] - ONNX default
+    Oihw = 8,       // Weight: [O, I, H, W] - ONNX default
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,27 +88,33 @@ pub enum Padding {
     Explicit = 2,
 }
 
-/// Mars file header (76 bytes)
+/// Mars file header (76 bytes) - matches C mars_header_t exactly
+/// Offsets verified: magic(0), version_major(4), version_minor(6), flags(8),
+/// num_layers(12), num_tensors(16), num_inputs(20), num_outputs(24),
+/// weights_offset(28), weights_size(36), input_tensor_ids(44), output_tensor_ids(60)
 #[derive(Debug, Clone)]
 pub struct MarsHeader {
-    pub magic: u32,           // 4
-    pub version: u32,         // 4
-    pub num_layers: u32,      // 4
-    pub num_tensors: u32,     // 4
-    pub num_inputs: u32,      // 4
-    pub num_outputs: u32,     // 4
-    pub weights_offset: u32,  // 4
-    pub weights_size: u32,    // 4
-    pub input_tensor_ids: [u32; 4],  // 16
-    pub output_tensor_ids: [u32; 4], // 16
-    pub reserved: [u32; 3],   // 12
-}
+    pub magic: u32,                     // offset 0, 4 bytes
+    pub version_major: u16,             // offset 4, 2 bytes
+    pub version_minor: u16,             // offset 6, 2 bytes
+    pub flags: u32,                     // offset 8, 4 bytes (reserved)
+    pub num_layers: u32,                // offset 12, 4 bytes
+    pub num_tensors: u32,               // offset 16, 4 bytes
+    pub num_inputs: u32,                // offset 20, 4 bytes
+    pub num_outputs: u32,               // offset 24, 4 bytes
+    pub weights_offset: u64,            // offset 28, 8 bytes
+    pub weights_size: u64,              // offset 36, 8 bytes
+    pub input_tensor_ids: [u32; 4],     // offset 44, 16 bytes
+    pub output_tensor_ids: [u32; 4],    // offset 60, 16 bytes
+}                                       // Total: 76 bytes
 
 impl MarsHeader {
     pub fn new() -> Self {
         Self {
             magic: MARS_MAGIC,
-            version: MARS_VERSION,
+            version_major: MARS_VERSION_MAJOR,
+            version_minor: MARS_VERSION_MINOR,
+            flags: 0,
             num_layers: 0,
             num_tensors: 0,
             num_inputs: 0,
@@ -110,46 +123,46 @@ impl MarsHeader {
             weights_size: 0,
             input_tensor_ids: [0xFFFFFFFF; 4],
             output_tensor_ids: [0xFFFFFFFF; 4],
-            reserved: [0; 3],
         }
     }
 
     pub fn write<W: Write>(&self, w: &mut W) -> io::Result<()> {
         w.write_u32::<LittleEndian>(self.magic)?;
-        w.write_u32::<LittleEndian>(self.version)?;
+        w.write_u16::<LittleEndian>(self.version_major)?;
+        w.write_u16::<LittleEndian>(self.version_minor)?;
+        w.write_u32::<LittleEndian>(self.flags)?;
         w.write_u32::<LittleEndian>(self.num_layers)?;
         w.write_u32::<LittleEndian>(self.num_tensors)?;
         w.write_u32::<LittleEndian>(self.num_inputs)?;
         w.write_u32::<LittleEndian>(self.num_outputs)?;
-        w.write_u32::<LittleEndian>(self.weights_offset)?;
-        w.write_u32::<LittleEndian>(self.weights_size)?;
+        w.write_u64::<LittleEndian>(self.weights_offset)?;
+        w.write_u64::<LittleEndian>(self.weights_size)?;
         for id in &self.input_tensor_ids {
             w.write_u32::<LittleEndian>(*id)?;
         }
         for id in &self.output_tensor_ids {
             w.write_u32::<LittleEndian>(*id)?;
         }
-        for r in &self.reserved {
-            w.write_u32::<LittleEndian>(*r)?;
-        }
         Ok(())
     }
 }
 
-/// Tensor descriptor (124 bytes)
+/// Tensor descriptor (124 bytes) - matches C mars_tensor_t exactly
+/// Offsets: id(0), name(4), dtype(64), format(68), ndims(72), shape(76),
+/// data_offset(100), data_size(108), scale(116), zero_point(120)
 #[derive(Debug, Clone)]
 pub struct MarsTensor {
-    pub id: u32,
-    pub name: String,
-    pub dtype: DataType,
-    pub format: DataFormat,
-    pub ndims: u32,
-    pub shape: [u32; MARS_MAX_DIMS],
-    pub scale: f32,
-    pub zero_point: i32,
-    pub data_offset: u32,
-    pub data_size: u32,
-}
+    pub id: u32,                        // offset 0, 4 bytes
+    pub name: String,                   // offset 4, 60 bytes (MARS_MAX_NAME)
+    pub dtype: DataType,                // offset 64, 4 bytes
+    pub format: DataFormat,             // offset 68, 4 bytes
+    pub ndims: u32,                     // offset 72, 4 bytes
+    pub shape: [i32; MARS_MAX_DIMS],    // offset 76, 24 bytes (6 * 4)
+    pub data_offset: u64,               // offset 100, 8 bytes
+    pub data_size: u64,                 // offset 108, 8 bytes
+    pub scale: f32,                     // offset 116, 4 bytes
+    pub zero_point: i32,                // offset 120, 4 bytes
+}                                       // Total: 124 bytes
 
 impl MarsTensor {
     pub fn new(id: u32, name: &str) -> Self {
@@ -160,17 +173,17 @@ impl MarsTensor {
             format: DataFormat::Nhwc,
             ndims: 4,
             shape: [0; MARS_MAX_DIMS],
-            scale: 1.0,
-            zero_point: 0,
             data_offset: 0,
             data_size: 0,
+            scale: 1.0,
+            zero_point: 0,
         }
     }
 
     pub fn write<W: Write>(&self, w: &mut W) -> io::Result<()> {
         w.write_u32::<LittleEndian>(self.id)?;
 
-        // Write name (64 bytes, null-padded)
+        // Write name (60 bytes, null-padded)
         let mut name_bytes = [0u8; MARS_MAX_NAME];
         let name_len = self.name.len().min(MARS_MAX_NAME - 1);
         name_bytes[..name_len].copy_from_slice(&self.name.as_bytes()[..name_len]);
@@ -180,12 +193,12 @@ impl MarsTensor {
         w.write_u32::<LittleEndian>(self.format as u32)?;
         w.write_u32::<LittleEndian>(self.ndims)?;
         for dim in &self.shape {
-            w.write_u32::<LittleEndian>(*dim)?;
+            w.write_i32::<LittleEndian>(*dim)?;
         }
+        w.write_u64::<LittleEndian>(self.data_offset)?;
+        w.write_u64::<LittleEndian>(self.data_size)?;
         w.write_f32::<LittleEndian>(self.scale)?;
         w.write_i32::<LittleEndian>(self.zero_point)?;
-        w.write_u32::<LittleEndian>(self.data_offset)?;
-        w.write_u32::<LittleEndian>(self.data_size)?;
         Ok(())
     }
 }
@@ -315,4 +328,102 @@ impl MarsLayer {
         }
         Ok(())
     }
+}
+
+
+/// Pack weights from OIHW (ONNX) to NMHWSOIB2 (NNA native format)
+///
+/// NMHWSOIB2 format for INT8:
+/// - Shape: [N_OFP, M_IFP, KH, KW, OFP, IFP]
+/// - N_OFP = ceil(out_ch/32), M_IFP = ceil(in_ch/32)
+/// - OFP = IFP = 32 (channel packing factor)
+/// - Size: N_OFP × M_IFP × KH × KW × 1024 bytes
+pub fn pack_weights_nmhwsoib2(
+    weights: &[i8],
+    out_ch: usize,
+    in_ch: usize,
+    kh: usize,
+    kw: usize,
+) -> Vec<u8> {
+    let n_ofp = (out_ch + 31) / 32;
+    let m_ifp = (in_ch + 31) / 32;
+    let packed_size = n_ofp * m_ifp * kh * kw * 32 * 32;
+    let mut packed = vec![0u8; packed_size];
+
+    for o in 0..out_ch {
+        for i in 0..in_ch {
+            for h in 0..kh {
+                for w in 0..kw {
+                    // Source index in OIHW format
+                    let src_idx = ((o * in_ch + i) * kh + h) * kw + w;
+
+                    // Destination in NMHWSOIB2: [n_ofp, m_ifp, kh, kw, ofp, ifp]
+                    let n = o / 32;
+                    let ofp = o % 32;
+                    let m = i / 32;
+                    let ifp = i % 32;
+                    let dst_idx = ((((n * m_ifp + m) * kh + h) * kw + w) * 32 + ofp) * 32 + ifp;
+
+                    if src_idx < weights.len() && dst_idx < packed.len() {
+                        packed[dst_idx] = weights[src_idx] as u8;
+                    }
+                }
+            }
+        }
+    }
+
+    packed
+}
+
+/// Calculate NMHWSOIB2 packed size in bytes
+pub fn nmhwsoib2_size(out_ch: usize, in_ch: usize, kh: usize, kw: usize) -> usize {
+    let n_ofp = (out_ch + 31) / 32;
+    let m_ifp = (in_ch + 31) / 32;
+    n_ofp * m_ifp * kh * kw * 1024  // 32 * 32 = 1024
+}
+
+/// Calculate NDHWC32 tensor size for feature maps
+///
+/// NDHWC32 format:
+/// - Shape: [N, D_C32, H, W, 32]
+/// - D_C32 = ceil(channels/32)
+/// - Size: N × D_C32 × H × W × 32 bytes (for INT8)
+pub fn ndhwc32_size(batch: usize, channels: usize, height: usize, width: usize) -> usize {
+    let d_c32 = (channels + 31) / 32;
+    batch * d_c32 * height * width * 32
+}
+
+/// Convert NCHW tensor to NDHWC32 format (in-place would require same size)
+pub fn convert_nchw_to_ndhwc32(
+    input: &[u8],
+    batch: usize,
+    channels: usize,
+    height: usize,
+    width: usize,
+) -> Vec<u8> {
+    let d_c32 = (channels + 31) / 32;
+    let out_size = batch * d_c32 * height * width * 32;
+    let mut output = vec![0u8; out_size];
+
+    for n in 0..batch {
+        for c in 0..channels {
+            for h in 0..height {
+                for w in 0..width {
+                    // Source: NCHW
+                    let src_idx = ((n * channels + c) * height + h) * width + w;
+
+                    // Dest: NDHWC32 = [N, D_C32, H, W, 32]
+                    let d = c / 32;
+                    let c32 = c % 32;
+                    let dst_idx = (((n * d_c32 + d) * height + h) * width + w) * 32 + c32;
+
+                    if src_idx < input.len() && dst_idx < output.len() {
+                        output[dst_idx] = input[src_idx];
+                    }
+                }
+            }
+        }
+    }
+
+    output
 }
