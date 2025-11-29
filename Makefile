@@ -72,9 +72,9 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.c | $(OBJ_DIR)
 $(OBJ_DIR)/venus_%.o: $(SRC_DIR)/venus/%.cpp | $(OBJ_DIR)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-# Compile Mars C files
+# Compile Mars C files (needs extra include path for device_internal.h)
 $(OBJ_DIR)/mars_%.o: $(SRC_DIR)/mars/%.c | $(OBJ_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) -I$(SRC_DIR) -I$(SRC_DIR)/nna -c $< -o $@
 
 # Build NNA static library (includes C++ Venus objects)
 $(LIB_NNA_STATIC): $(C_OBJS) $(CXX_OBJS) | $(LIB_DIR)
@@ -112,8 +112,12 @@ $(BIN_DIR)/yolo_detect: $(EXAMPLES_DIR)/yolo_detect.cpp $(LIB_NNA_STATIC) | $(BI
 # Build Mars test (filter out mars_test from MARS_OBJS for library)
 MARS_LIB_OBJS := $(filter-out $(OBJ_DIR)/mars_mars_test.o,$(MARS_OBJS))
 
-$(BIN_DIR)/mars_test: $(SRC_DIR)/mars/mars_test.c $(OBJ_DIR)/mars_mars_runtime.o $(LIB_NNA_STATIC) | $(BIN_DIR)
-	$(CC) $(CFLAGS) $< $(OBJ_DIR)/mars_mars_runtime.o -o $@ $(LDFLAGS) -lnna $(LIBS) -lm
+# MXU-accelerated convolution object
+$(OBJ_DIR)/mars_mxu_conv.o: $(SRC_DIR)/mars/mxu_conv.c | $(OBJ_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BIN_DIR)/mars_test: $(SRC_DIR)/mars/mars_test.c $(OBJ_DIR)/mars_mars_runtime.o $(OBJ_DIR)/mars_mxu_conv.o $(LIB_NNA_STATIC) | $(BIN_DIR)
+	$(CC) $(CFLAGS) $< $(OBJ_DIR)/mars_mars_runtime.o $(OBJ_DIR)/mars_mxu_conv.o -o $@ $(LDFLAGS) -lnna $(LIBS) -lm
 	@echo "Built Mars test: $@"
 
 examples: $(EXAMPLE_BINS) $(CXX_EXAMPLE_BINS) $(BIN_DIR)/mars_test

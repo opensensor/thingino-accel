@@ -17,6 +17,21 @@
 #include "nna.h"
 #include "device_internal.h"
 
+/* External MXU-accelerated convolution */
+extern void conv2d_int8_mxu(
+    const int8_t *input, int in_h, int in_w, int in_c,
+    const int8_t *weight, int out_c, int kh, int kw,
+    const int32_t *bias,
+    int8_t *output, int out_h, int out_w,
+    int stride_h, int stride_w,
+    int pad_top, int pad_left,
+    float in_scale, float w_scale, float out_scale);
+
+/* Set to 1 to use MXU acceleration, 0 for software fallback */
+#ifndef USE_MXU
+#define USE_MXU 1
+#endif
+
 /* Align value up to alignment */
 #define ALIGN_UP(x, align) (((x) + (align) - 1) & ~((align) - 1))
 
@@ -478,10 +493,23 @@ static mars_error_t execute_conv2d(mars_model_t *model, mars_runtime_layer_t *la
         pad_left = pad_w / 2;
     }
 
-    printf("  Conv2D: %dx%dx%d -> %dx%dx%d (k=%dx%d, s=%d)\n",
+    printf("  Conv2D: %dx%dx%d -> %dx%dx%d (k=%dx%d, s=%d) [%s]\n",
            in_h, in_w, in_c, out_h, out_w, out_c,
-           params->kernel_h, params->kernel_w, params->stride_h);
+           params->kernel_h, params->kernel_w, params->stride_h,
+           USE_MXU ? "MXU" : "SW");
 
+#if USE_MXU
+    /* Use MXU-accelerated convolution */
+    conv2d_int8_mxu(
+        (int8_t *)input->vaddr, in_h, in_w, in_c,
+        (int8_t *)weight->vaddr, out_c, params->kernel_h, params->kernel_w,
+        bias ? (int32_t *)bias->vaddr : NULL,
+        (int8_t *)output->vaddr, out_h, out_w,
+        params->stride_h, params->stride_w,
+        pad_top, pad_left,
+        input->desc.scale, weight->desc.scale, output->desc.scale
+    );
+#else
     /* Run software convolution */
     conv2d_int8_sw(
         (int8_t *)input->vaddr, in_h, in_w, in_c,
@@ -492,6 +520,7 @@ static mars_error_t execute_conv2d(mars_model_t *model, mars_runtime_layer_t *la
         pad_top, pad_left,
         input->desc.scale, weight->desc.scale, output->desc.scale
     );
+#endif
 
     /* Apply activation if specified */
     if (params->activation == MARS_ACT_RELU) {
