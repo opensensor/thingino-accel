@@ -6,10 +6,13 @@
 
 The T41 SoC uses MXUv3 (Media Extension Unit v3), which is significantly different from MXU1/MXU2:
 - **32 VPR registers** (VPR0-VPR31), each **512 bits** (64 bytes)
+- A small **vector sum register cluster (VSR0-VSR3)** used as accumulators by MAC-style instructions
+- A **vector write register file (VWR)**, effectively a word-level alias of VPR31 (VW0, VW1, ... inside VPR31)
 - Uses **SPECIAL2 opcode** (0x1C = 28) for most instructions
 - Uses **COP2 opcode** (0x12 = 18) for compute instructions
 - Requires **64-byte aligned memory** for load/store
-- May require **NNA-allocated memory** for proper operation
+
+The VPR file is the main vector data path we see in disassembly (LA/SA, arithmetic, shuffles). MAC-style instructions appear to accumulate into the VSR registers, and separate "sum"-style operations move those accumulated results back into VPRs or general-purpose registers. For Mars we currently only touch the VPR file directly, but knowing that VSR/VWR exist helps explain where MAC state actually lives.
 
 ## Instruction Encoding
 
@@ -218,6 +221,42 @@ VPR0 (int16):    33, 34, 35, 36, 37, 38, 39, 40
 VPR1 (int16):    1, 2, 3, 4, 5, 6, 7, 8
 ```
 
+## Sum Registers and SUM*/MFSUM* Operations
+
+MAC-style instructions do not accumulate directly into VPRs. Instead they feed a
+small cluster of **sum registers** `VSR0–VSR3`. A separate family of COP2
+instructions exposes these sums to software:
+
+- `SUMZ vsd` – clear sum register `VSR[vsd]`.
+- `MFSUM vrd, vss` – move `VSR[vss]` into `VPR[vrd]` (non-destructive).
+- `MFSUMZ vrd, vsd` – move `VSR[vsd]` into `VPR[vrd]` and then clear `VSR[vsd]`.
+- `MTSUM vsd, vrs` – move `VPR[vrs]` into `VSR[vsd]`.
+- `MXSUM vrd, vrs, vsd` – swap: `temp = VSR[vsd]; VSR[vsd] = VPR[vrs]; VPR[vrd] = temp`.
+
+In terms of the COP2 encoding (see "Instruction Encoding" above), these live in
+the `rs = 19` class and use the following field mapping:
+
+```c
+// rs=19 (sum class), vrd/vrs are VPR indices, vss/vsd are VSR indices (0-3)
+SUMZ(vsd)           : rt = 0,    rd = 0,    sa = vsd, fn = 0x1c
+MFSUM(vrd, vss)     : rt = 0,    rd = vss, sa = vrd, fn = 0x0f
+MFSUMZ(vrd, vsd)    : rt = 0,    rd = vsd, sa = vrd, fn = 0x1e
+MTSUM(vsd, vrs)     : rt = vrs,  rd = 0,   sa = vsd, fn = 0x1d
+MXSUM(vrd, vrs, vsd): rt = vrs,  rd = vsd, sa = vrd, fn = 0x1f
+```
+
+In `include/mxuv3.h` these are wrapped as raw `.word` helpers:
+
+```c
+MXUV3_MTSUM(0, 0);   // VSR0 <- VPR0
+MXUV3_MFSUM(1, 0);   // VPR1 <- VSR0
+MXUV3_SUMZ(0);       // clear VSR0
+MXUV3_MFSUMZ(2, 0);  // VPR2 <- VSR0, then VSR0 = 0
+```
+
+This gives us a concrete way to pull MAC accumulators out into normal VPRs,
+store them with SA0, or feed them into further MXU arithmetic.
+
 ## Store Instructions
 
 ### func=0x2f - Store (uses $k0/$26 as base)
@@ -246,7 +285,7 @@ VPR1 (int16):    1, 2, 3, 4, 5, 6, 7, 8
 
 ## Notes
 
-1. **Memory Requirements**: Tests with stack memory produce partial results; NNA-allocated memory via `IOCTL_SOC_NNA_MALLOC` is required for full functionality.
+1. **Memory behaviour on T41**: In current experiments on T41, using plain stack/heap memory for MXU3 operations sometimes produces partial or no results, while buffers allocated and managed via the NNA driver tend to behave reliably. This should be treated as an observed platform quirk rather than a hard requirement of the MXU3 ISA itself.
 
 2. **Register Usage**:
    - rs=13 ($t5) is commonly used as base for weight loading (func=0x31)
@@ -255,9 +294,14 @@ VPR1 (int16):    1, 2, 3, 4, 5, 6, 7, 8
 
 3. **VPR29/VPR30**: These appear to be special source registers for MAC operations.
 
-4. **VPR6**: The rd=6 field in c2 instructions suggests VPR6 may be a special control register.
+4. **VSR0-VSR3 (sum registers)**: MAC-style instructions accumulate into the VSR
+   sum registers, with `SUMZ`/`MFSUM`/`MFSUMZ`/`MTSUM`/`MXSUM` used to move
+   values between VSR and VPR. Basic wrappers for these now exist in
+   `include/mxuv3.h` (see "Sum Registers and SUM*/MFSUM* Operations" above).
 
-5. **Data Layout**: The MXU processes data in specific patterns:
+5. **VPR6**: The rd=6 field in c2 instructions suggests VPR6 may be a special control register.
+
+6. **Data Layout**: The MXU processes data in specific patterns:
    - VPR9/11/13 contain float32 conversions of specific input byte ranges
    - VPR0/1 contain int16 conversions of specific input byte ranges
 
@@ -308,11 +352,16 @@ The MAC sequence converts int8 input to float32:
 
 ## Limitations
 
-1. **MAC Operations Not Fully Decoded**: The exact multiply-accumulate formula for the c2 `func=0x0b/0x23` pair is not yet understood. These instructions clearly perform data conversion (int8→int16/float32) and some accumulation, but the final MAC results appear to live in internal accumulators rather than any VPR that we can load/store.
+1. **MAC Operations Not Fully Decoded**: The exact multiply-accumulate formula
+   for the c2 `func=0x0b/0x23` pair is not yet understood. These instructions
+   clearly perform data conversion (int8→int16/float32) and some accumulation,
+   and their results live in the VSR0–VSR3 sum registers. We can now move those
+   sums back into VPRs via `MFSUM`/`MFSUMZ`, but the precise mapping from MAC
+   invocations to VSR lanes is still being worked out.
 
 2. **Store Instructions**: The func=0x2f, 0x34, 0x35 store instructions do not appear to write to the expected output buffer in our standalone tests. In Venus they are typically paired with NNA‑managed buffers and descriptor setup; they likely depend on proper NNDMA/AIP configuration.
 
-3. **NNA Hardware Dependency**: Full functionality requires NNA hardware initialization and memory allocation via `/dev/soc-nna`. Using stack/heap buffers outside the NNA allocator typically gives only partial or no results.
+3. **NNA Hardware Dependency (implementation detail)**: On the T41 platform, full MXU3 functionality appears to depend on NNA hardware initialization and interaction with the NNA driver (e.g., buffers known to `/dev/soc-nna`). In our experiments, plain stack/heap buffers sometimes produced only partial results, while driver-managed buffers behaved consistently. This looks like a SoC/driver integration issue (cache/coherency/aliasing) rather than a strict architectural requirement, and the exact constraints are still being investigated.
 
 ## COP2 Vector Arithmetic (ADD / SUB / MUL)
 
@@ -359,6 +408,69 @@ By setting all three registers equal (`rt = rd = sa`), we get useful unary varia
 - `VPR_ZERO(reg)` — `VPR[reg] = VPR[reg] - VPR[reg] = 0`
 
 These are exposed in `mxuv3.h` and are handy building blocks for activation functions and simple fused arithmetic in Mars.
+
+## MAX/MIN Instructions (NEW - from PDF Section 3.7.30-3.7.35)
+
+The MXU3 PDF reveals MAX/MIN vector comparison instructions, critical for:
+- **ReLU activation**: `y = max(x, 0)`
+- **MaxPool layers**: Finding maximum across pooling windows
+- **Clipping**: `y = min(max(x, low), high)`
+
+### Encoding
+
+- Opcode: **COP2** (`0x12`)
+- rs = 16 (0x10)
+- Format: `010010 10000 vrs vrp vrd function`
+
+| Instruction | Function | Description |
+|-------------|----------|-------------|
+| MAXSW | 0x1E | Max signed word (16 x int32/float32) |
+| MINSW | 0x16 | Min signed word (16 x int32/float32) |
+| MAXUB | 0x08 | Max unsigned byte (64 x uint8) |
+| MINUB | 0x00 | Min unsigned byte (64 x uint8) |
+
+### Operation
+
+```
+VPR[vrd] = max/min(VPR[vrs], VPR[vrp])  // element-wise
+```
+
+For float32: The signed word comparison works correctly because IEEE754 positive floats
+have the same ordering as their bit patterns when interpreted as signed integers.
+
+### Usage in mxuv3.h
+
+```c
+VPR_MAXSW(vrd, vrs, vrp);  // VPR[vrd] = max(VPR[vrs], VPR[vrp])
+VPR_MINSW(vrd, vrs, vrp);  // VPR[vrd] = min(VPR[vrs], VPR[vrp])
+VPR_MAXUB(vrd, vrs, vrp);  // Unsigned byte max (for quantized networks)
+VPR_MINUB(vrd, vrs, vrp);  // Unsigned byte min
+```
+
+### ReLU Implementation
+
+```c
+// Initialize VPR1 with zeros
+float zeros[16] __attribute__((aligned(64))) = {0};
+LA0_VPR(1, zeros);
+
+// Process 16 floats at a time
+for (i = 0; i + 16 <= count; i += 16) {
+    LA0_VPR(0, input + i);     // VPR0 = input
+    VPR_MAXSW(2, 0, 1);        // VPR2 = max(input, 0)
+    SA0_VPR(2, output + i);
+}
+```
+
+### Performance Results
+
+| Layer | Before (Scalar) | After (MXU MAX) | Speedup |
+|-------|-----------------|-----------------|---------|
+| ReLU 32K floats | 459 µs | 100 µs | **4.58x** |
+| MaxPool 16x16x16 | 90 µs | 8.6 µs | **10.48x** |
+| MaxPool 28x28x32 | 331 µs | 51 µs | **6.45x** |
+
+Throughput: **2.6 GB/s** for ReLU operations.
 
 ## Missing Vector Instructions (DIV / SQRT / RSQRT)
 

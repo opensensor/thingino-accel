@@ -45,12 +45,16 @@ using load_model_fn_t = int (*)(BaseNet *net, const void *model_path,
 using net_simple_fn_t = int (*)(BaseNet *net);
 
 // Global stage tracker so we can see roughly where std::terminate() fires.
-static const char *g_stage = "<pre-main>";
+static const char *g_stage  = "<pre-main>";
+static const char *g_detail = nullptr;  // e.g. current dlopen() target
 
 static void custom_terminate() {
-    fprintf(stderr,
-            "\n[venus_trace_test] std::terminate called at stage %s (likely from OEM libs)\n",
+    fprintf(stderr, "\n[venus_trace_test] std::terminate called at stage %s",
             g_stage ? g_stage : "(null)");
+    if (g_detail && *g_detail) {
+        fprintf(stderr, " while handling %s", g_detail);
+    }
+    fprintf(stderr, " (likely from OEM libs)\n");
     // We could try to introspect std::current_exception() here, but in this
     // extremely constrained environment it's safer to just exit.
     _Exit(1);
@@ -61,7 +65,9 @@ struct TerminateGuard {
 } g_terminate_guard;
 
 static void *must_dlopen(const char *path) {
-    g_stage = "dlopen";
+    g_stage  = "dlopen";
+    g_detail = path;
+    fprintf(stderr, "[venus_trace_test] about to dlopen(%s) ...\n", path);
     void *h = dlopen(path, RTLD_NOW | RTLD_GLOBAL);
     if (!h) {
         fprintf(stderr, "[venus_trace_test] dlopen(%s) failed: %s\n", path, dlerror());
@@ -84,6 +90,11 @@ static T must_dlsym(void *handle, const char *symbol) {
 }
 
 int main(int argc, char **argv) {
+    // Make sure stdout/stderr are unbuffered so that we see logs even if
+    // std::terminate()/_Exit() happen unexpectedly during dlopen().
+    setvbuf(stdout, nullptr, _IONBF, 0);
+    setvbuf(stderr, nullptr, _IONBF, 0);
+
     printf("╔══════════════════════════════════════════════════════════╗\n");
     printf("║  Venus Trace Test (dlopen-based)                         ║\n");
     printf("╚══════════════════════════════════════════════════════════╝\n\n");
@@ -92,14 +103,22 @@ int main(int argc, char **argv) {
     const char *model_path = (argc > 1) ? argv[1] : default_model;
     printf("Using model: %s\n", model_path);
 
-    // 1) Bring in OEM libs explicitly in a controlled order so that any
+    // 1) Bring in OEM driver libs explicitly in a controlled order so that any
     // unresolved driver/AIP symbols in libvenus.so can bind to them.
     printf("[venus_trace_test] dlopen(/opt/libdrivers.so) ...\n");
     void *h_drivers = must_dlopen("/opt/libdrivers.so");
     (void)h_drivers;
 
-    printf("[venus_trace_test] dlopen(/opt/libaip.so) ...\n");
-    void *h_aip = must_dlopen("/opt/libaip.so");
+    const char *aip_path = getenv("VENUS_AIP_LIB");
+    if (!aip_path || !*aip_path) {
+        // Default to the lightweight shim built from tools/libaip_shim.c and
+        // installed in build/lib. Users who want the real hardware AIP can
+        // override this with:
+        //   export VENUS_AIP_LIB=/opt/libaip.so
+        aip_path = "/mnt/nfs/build/lib/libaip_shim.so";
+    }
+    printf("[venus_trace_test] dlopen(%s) ...\n", aip_path);
+    void *h_aip = must_dlopen(aip_path);
     (void)h_aip;
 
     printf("[venus_trace_test] dlopen(/opt/libvenus.so) ...\n");

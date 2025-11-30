@@ -26,7 +26,7 @@ int bs_covert_cfg(data_info_s *src, const data_info_s *dst,
     (void)src; (void)dst; (void)coef; (void)offset; (void)task_info;
     // In OEM code this would configure a bit-scaler chain. For our purposes
     // we just pretend it succeeded.
-    // fprintf(stderr, "[aip_shim] bs_covert_cfg()\n");
+    fprintf(stderr, "[aip_shim] bs_covert_cfg()\n");
     return 0;
 }
 
@@ -34,19 +34,19 @@ int bs_covert_step_start(const task_info_s *task_info,
                          uint32_t dst_ptr, const bs_data_locate_e locate)
 {
     (void)task_info; (void)dst_ptr; (void)locate;
-    // fprintf(stderr, "[aip_shim] bs_covert_step_start()\n");
+    fprintf(stderr, "[aip_shim] bs_covert_step_start()\n");
     return 0;
 }
 
 int bs_covert_step_wait(void)
 {
-    // fprintf(stderr, "[aip_shim] bs_covert_step_wait()\n");
+    fprintf(stderr, "[aip_shim] bs_covert_step_wait()\n");
     return 0;
 }
 
 int bs_covert_step_exit(void)
 {
-    // fprintf(stderr, "[aip_shim] bs_covert_step_exit()\n");
+    fprintf(stderr, "[aip_shim] bs_covert_step_exit()\n");
     return 0;
 }
 
@@ -56,7 +56,7 @@ int ingenic_aip_resize_process(data_info_s *src,
                                const uint32_t *coef, const uint32_t *offset)
 {
     (void)src; (void)box_num; (void)dst; (void)boxes; (void)coef; (void)offset;
-    // fprintf(stderr, "[aip_shim] ingenic_aip_resize_process()\n");
+    fprintf(stderr, "[aip_shim] ingenic_aip_resize_process()\n");
     return 0;
 }
 
@@ -66,7 +66,7 @@ int ingenic_aip_affine_process(data_info_s *src,
                                const uint32_t *coef, const uint32_t *offset)
 {
     (void)src; (void)box_num; (void)dst; (void)boxes; (void)coef; (void)offset;
-    // fprintf(stderr, "[aip_shim] ingenic_aip_affine_process()\n");
+    fprintf(stderr, "[aip_shim] ingenic_aip_affine_process()\n");
     return 0;
 }
 
@@ -76,25 +76,26 @@ int ingenic_aip_perspective_process(data_info_s *src,
                                     const uint32_t *coef, const uint32_t *offset)
 {
     (void)src; (void)box_num; (void)dst; (void)boxes; (void)coef; (void)offset;
-    // fprintf(stderr, "[aip_shim] ingenic_aip_perspective_process()\n");
+    fprintf(stderr, "[aip_shim] ingenic_aip_perspective_process()\n");
     return 0;
 }
 
 int ingenic_aip_init(void)
 {
-    // fprintf(stderr, "[aip_shim] ingenic_aip_init()\n");
+    fprintf(stderr, "[aip_shim] ingenic_aip_init()\n");
     return 0;
 }
 
 int ingenic_aip_deinit(void)
 {
-    // fprintf(stderr, "[aip_shim] ingenic_aip_deinit()\n");
+    fprintf(stderr, "[aip_shim] ingenic_aip_deinit()\n");
     return 0;
 }
 
 int ingenic_aip_version(void)
 {
     // Arbitrary non-zero version number.
+    fprintf(stderr, "[aip_shim] ingenic_aip_version() -> 1\n");
     return 1;
 }
 
@@ -103,5 +104,6 @@ int ingenic_aip_max_cnt(int aip_type)
     (void)aip_type;
     // Say we support a single AIP instance; Venus should treat this as
     // "at least one" and continue.
+    fprintf(stderr, "[aip_shim] ingenic_aip_max_cnt(%d) -> 1\n", aip_type);
     return 1;
 }

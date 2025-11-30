@@ -48,7 +48,7 @@ MARS_OBJS := $(patsubst $(SRC_DIR)/mars/%.c,$(OBJ_DIR)/mars_%.o,$(MARS_SRCS))
 ALL_OBJS := $(C_OBJS) $(CXX_OBJS)
 
 # Example programs (C)
-EXAMPLES := test_init test_model_load test_inference
+EXAMPLES := test_init test_model_load test_inference mars_math_test
 EXAMPLE_BINS := $(patsubst %,$(BIN_DIR)/%,$(EXAMPLES))
 
 # Example programs (C++)
@@ -99,7 +99,7 @@ $(LIB_VENUS_SHARED): $(CXX_OBJS) $(C_OBJS) | $(LIB_DIR)
 # Build libraries (both NNA and Venus)
 lib: $(LIB_NNA_STATIC) $(LIB_NNA_SHARED) $(LIB_VENUS_STATIC) $(LIB_VENUS_SHARED)
 
-# Build C examples
+# Build generic C examples (no extra objects)
 $(BIN_DIR)/%: $(EXAMPLES_DIR)/%.c $(LIB_NNA_STATIC) | $(BIN_DIR)
 	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS) -lnna $(LIBS)
 	@echo "Built example: $@"
@@ -134,7 +134,31 @@ $(BIN_DIR)/nna_dma_test: tools/nna_dma_test.c $(OBJ_DIR)/nna_dma.o | $(BIN_DIR)
 	$(CC) $(CFLAGS) $< $(OBJ_DIR)/nna_dma.o -o $@ $(LIBS)
 	@echo "Built NNA DMA test: $@"
 
-examples: $(EXAMPLE_BINS) $(CXX_EXAMPLE_BINS) $(BIN_DIR)/mars_test $(BIN_DIR)/nna_dma_test
+# Mars math test (needs mars_mars_math.o, mars_nn_cmd.o, mxu_ops.o, and libm)
+$(BIN_DIR)/mars_math_test: $(EXAMPLES_DIR)/mars_math_test.c $(OBJ_DIR)/mars_mars_math.o $(OBJ_DIR)/mars_mars_nn_cmd.o $(OBJ_DIR)/mars_mxu_ops.o $(LIB_NNA_STATIC) | $(BIN_DIR)
+	$(CC) $(CFLAGS) $< $(OBJ_DIR)/mars_mars_math.o $(OBJ_DIR)/mars_mars_nn_cmd.o $(OBJ_DIR)/mars_mxu_ops.o -o $@ $(LDFLAGS) -lnna $(LIBS) -lm
+	@echo "Built example: $@"
+
+# Mars NN HW object
+$(OBJ_DIR)/mars_mars_nn_hw.o: $(SRC_DIR)/mars/mars_nn_hw.c | $(OBJ_DIR)
+	$(CC) $(CFLAGS) -I$(SRC_DIR) -I$(SRC_DIR)/nna -c $< -o $@
+
+# Mars NNA benchmark (uses ORAM + MXU)
+$(BIN_DIR)/mars_nna_bench: $(EXAMPLES_DIR)/mars_nna_bench.c $(OBJ_DIR)/mars_mars_nn_hw.o $(OBJ_DIR)/mars_mars_math.o $(OBJ_DIR)/mars_mxu_ops.o $(LIB_NNA_STATIC) | $(BIN_DIR)
+	$(CC) $(CFLAGS) $< $(OBJ_DIR)/mars_mars_nn_hw.o $(OBJ_DIR)/mars_mars_math.o $(OBJ_DIR)/mars_mxu_ops.o -o $@ $(LDFLAGS) -lnna $(LIBS) -lm
+	@echo "Built Mars NNA benchmark: $@"
+
+# Mars Conv2D benchmark
+$(BIN_DIR)/mars_conv_bench: $(EXAMPLES_DIR)/mars_conv_bench.c $(OBJ_DIR)/mars_mars_nn_hw.o $(OBJ_DIR)/mars_mars_math.o $(OBJ_DIR)/mars_mxu_ops.o $(LIB_NNA_STATIC) | $(BIN_DIR)
+	$(CC) $(CFLAGS) $< $(OBJ_DIR)/mars_mars_nn_hw.o $(OBJ_DIR)/mars_mars_math.o $(OBJ_DIR)/mars_mxu_ops.o -o $@ $(LDFLAGS) -lnna $(LIBS) -lm
+	@echo "Built Mars Conv2D benchmark: $@"
+
+# Mars Layer benchmark (ReLU, BatchNorm, Pooling)
+$(BIN_DIR)/mars_layer_bench: $(EXAMPLES_DIR)/mars_layer_bench.c $(OBJ_DIR)/mars_mars_nn_hw.o $(OBJ_DIR)/mars_mars_math.o $(OBJ_DIR)/mars_mxu_ops.o $(LIB_NNA_STATIC) | $(BIN_DIR)
+	$(CC) $(CFLAGS) $< $(OBJ_DIR)/mars_mars_nn_hw.o $(OBJ_DIR)/mars_mars_math.o $(OBJ_DIR)/mars_mxu_ops.o -o $@ $(LDFLAGS) -lnna $(LIBS) -lm
+	@echo "Built Mars Layer benchmark: $@"
+
+examples: $(EXAMPLE_BINS) $(CXX_EXAMPLE_BINS) $(BIN_DIR)/mars_test $(BIN_DIR)/nna_dma_test $(BIN_DIR)/mars_nna_bench $(BIN_DIR)/mars_conv_bench $(BIN_DIR)/mars_layer_bench
 
 # Install (for cross-compilation, just copy to build dir)
 install: all

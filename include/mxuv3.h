@@ -316,12 +316,66 @@ static inline void mxuv3_memset_64(void *dst, uint8_t value, size_t size) {
  *   MUL: 0x4a64__a3 = rs=19, fn=35
  */
 
-/*
- * Build COP2 instruction encoding
- * op=0x12 (COP2), remaining fields as parameters
- */
-#define MXUV3_COP2_INST(rs, rt, rd, sa, fn) \
-    (0x48000000 | ((rs) << 21) | ((rt) << 16) | ((rd) << 11) | ((sa) << 6) | (fn))
+    /*
+     * Build COP2 instruction encoding
+     * op=0x12 (COP2), remaining fields as parameters
+     */
+    #define MXUV3_COP2_INST(rs, rt, rd, sa, fn) \
+        (0x48000000 | ((rs) << 21) | ((rt) << 16) | ((rd) << 11) | ((sa) << 6) | (fn))
+
+    /*
+     * Sum register access (VSR0-VSR3)
+     *
+     * These instructions use COP2 with rs=19 (0b10011) as the operation class.
+     * The mapping of fields is reconstructed as:
+     *   SUMZ   vsd           -> rs=19, rt=0,   rd=0,   sa=vsd, fn=0x1c
+     *   MFSUM  vrd, vss      -> rs=19, rt=0,   rd=vss, sa=vrd, fn=0x0f
+     *   MFSUMZ vrd, vsd      -> rs=19, rt=0,   rd=vsd, sa=vrd, fn=0x1e
+     *   MTSUM  vsd, vrs      -> rs=19, rt=vrs, rd=0,   sa=vsd, fn=0x1d
+     *   MXSUM  vrd, vrs, vsd -> rs=19, rt=vrs, rd=vsd, sa=vrd, fn=0x1f
+     *
+     * Here vrd/vrs are VPR indices and vss/vsd are VSR indices (0-3).
+     */
+
+    #define MXUV3_SUMZ(vsd) do { \
+        __asm__ __volatile__( \
+            ".word %0\n" \
+            :: "i"(MXUV3_COP2_INST(19, 0, 0, (vsd), 0x1c)) \
+            : "memory" \
+        ); \
+    } while (0)
+
+    #define MXUV3_MFSUM(vrd, vss) do { \
+        __asm__ __volatile__( \
+            ".word %0\n" \
+            :: "i"(MXUV3_COP2_INST(19, 0, (vss), (vrd), 0x0f)) \
+            : "memory" \
+        ); \
+    } while (0)
+
+    #define MXUV3_MFSUMZ(vrd, vsd) do { \
+        __asm__ __volatile__( \
+            ".word %0\n" \
+            :: "i"(MXUV3_COP2_INST(19, 0, (vsd), (vrd), 0x1e)) \
+            : "memory" \
+        ); \
+    } while (0)
+
+    #define MXUV3_MTSUM(vsd, vrs) do { \
+        __asm__ __volatile__( \
+            ".word %0\n" \
+            :: "i"(MXUV3_COP2_INST(19, (vrs), 0, (vsd), 0x1d)) \
+            : "memory" \
+        ); \
+    } while (0)
+
+    #define MXUV3_MXSUM(vrd, vrs, vsd) do { \
+        __asm__ __volatile__( \
+            ".word %0\n" \
+            :: "i"(MXUV3_COP2_INST(19, (vrs), (vsd), (vrd), 0x1f)) \
+            : "memory" \
+        ); \
+    } while (0)
 
 /*
  * VPR_ADD - Vector Add (16 floats) - IN-PLACE
@@ -443,6 +497,81 @@ static inline void mxuv3_zero_vpr0(void) {
 }
 
 /*
+ * =============================================================================
+ * MAX/MIN Instructions (from MXU3 PDF Section 3.7.30-3.7.35)
+ * =============================================================================
+ *
+ * These are critical for neural network activation functions (ReLU) and pooling.
+ *
+ * Encoding: COP2 with rs=16 (0x10)
+ *   010010 10000 vrs vrp vrd function
+ *   bits:  31-26 25-21 20-16 15-11 10-6  5-0
+ *
+ * Function codes:
+ *   MAXSB (signed byte):     0111 00 = 0x1C
+ *   MAXSH (signed halfword): 0111 01 = 0x1D
+ *   MAXSW (signed word):     0111 10 = 0x1E
+ *   MINSB (signed byte):     0101 00 = 0x14
+ *   MINSH (signed halfword): 0101 01 = 0x15
+ *   MINSW (signed word):     0101 10 = 0x16
+ *
+ * Operation: VPR[vrd] = max/min(VPR[vrs], VPR[vrp]) element-wise
+ *
+ * For float32: Use signed word (W) format - IEEE754 float bit patterns
+ * compare correctly with signed integer comparison for positive values
+ * and for values with same sign.
+ */
+
+/* MAXSW - Max Signed Word (16 x int32, works for positive floats) */
+#define VPR_MAXSW(vrd, vrs, vrp) do { \
+    __asm__ __volatile__( \
+        ".word %0\n sync\n" \
+        :: "i"(0x48000000 | (16 << 21) | ((vrs) << 16) | ((vrp) << 11) | ((vrd) << 6) | 0x1E) \
+        : "memory" \
+    ); \
+} while(0)
+
+/* MINSW - Min Signed Word (16 x int32, works for positive floats) */
+#define VPR_MINSW(vrd, vrs, vrp) do { \
+    __asm__ __volatile__( \
+        ".word %0\n sync\n" \
+        :: "i"(0x48000000 | (16 << 21) | ((vrs) << 16) | ((vrp) << 11) | ((vrd) << 6) | 0x16) \
+        : "memory" \
+    ); \
+} while(0)
+
+/* MAXUB - Max Unsigned Byte (64 x uint8) - for quantized networks */
+#define VPR_MAXUB(vrd, vrs, vrp) do { \
+    __asm__ __volatile__( \
+        ".word %0\n sync\n" \
+        :: "i"(0x48000000 | (16 << 21) | ((vrs) << 16) | ((vrp) << 11) | ((vrd) << 6) | 0x08) \
+        : "memory" \
+    ); \
+} while(0)
+
+/* MINUB - Min Unsigned Byte (64 x uint8) - for quantized networks */
+#define VPR_MINUB(vrd, vrs, vrp) do { \
+    __asm__ __volatile__( \
+        ".word %0\n sync\n" \
+        :: "i"(0x48000000 | (16 << 21) | ((vrs) << 16) | ((vrp) << 11) | ((vrd) << 6) | 0x00) \
+        : "memory" \
+    ); \
+} while(0)
+
+/*
+ * Convenience macros for common patterns:
+ *
+ * ReLU: y = max(x, 0)
+ *   Load zeros to VPR[zero_reg], input to VPR[in_reg]
+ *   VPR_MAXSW(out_reg, in_reg, zero_reg)
+ *
+ * MaxPool 2x2: find max of 4 values
+ *   VPR_MAXSW(temp, v0, v1)  // temp = max(v0, v1)
+ *   VPR_MAXSW(temp, temp, v2) // temp = max(temp, v2)
+ *   VPR_MAXSW(out, temp, v3)  // out = max(temp, v3)
+ */
+
+/*
  * Instruction encodings reference table:
  *
  * | Operation | rs | fn | Hex Pattern     | Formula                    |
@@ -497,6 +626,10 @@ static inline uint32_t mxuv3_read_mir(void) { return 0; }
 #define VPR_SQR(reg) ((void)0)
 #define VPR_DBL(reg) ((void)0)
 #define VPR_ZERO(reg) ((void)0)
+#define VPR_MAXSW(vrd, vrs, vrp) ((void)0)
+#define VPR_MINSW(vrd, vrs, vrp) ((void)0)
+#define VPR_MAXUB(vrd, vrs, vrp) ((void)0)
+#define VPR_MINUB(vrd, vrs, vrp) ((void)0)
 
 static inline void mxuv3_add_vpr0_vpr1_vpr2(void) {}
 static inline void mxuv3_sub_vpr0_vpr1_vpr2(void) {}
