@@ -115,6 +115,9 @@ static size_t tensor_byte_size(const mars_tensor_t *t) {
 }
 
 mars_error_t mars_load_memory(const void *data, size_t size, mars_model_t **out_model) {
+    fprintf(stderr, "Mars: mars_load_memory called, data=%p size=%zu\n", data, size);
+    fflush(stderr);
+
     if (!data || !out_model || size < sizeof(mars_header_t)) {
         return MARS_ERR_INVALID_FILE;
     }
@@ -122,11 +125,16 @@ mars_error_t mars_load_memory(const void *data, size_t size, mars_model_t **out_
     const uint8_t *ptr = (const uint8_t *)data;
 
     /* Parse header */
+    fprintf(stderr, "Mars: Parsing header...\n"); fflush(stderr);
     mars_header_t header;
     memcpy(&header, ptr, sizeof(header));
     ptr += sizeof(header);
 
     /* Validate magic */
+    fprintf(stderr, "Mars: Magic=0x%08x layers=%u tensors=%u\n",
+            header.magic, header.num_layers, header.num_tensors);
+    fflush(stderr);
+
     if (header.magic != MARS_MAGIC) {
         fprintf(stderr, "Mars: Invalid magic 0x%08x (expected 0x%08x)\n",
                 header.magic, MARS_MAGIC);
@@ -142,6 +150,7 @@ mars_error_t mars_load_memory(const void *data, size_t size, mars_model_t **out_
     }
 
     /* Allocate model context */
+    fprintf(stderr, "Mars: Allocating model context...\n"); fflush(stderr);
     mars_model_t *model = (mars_model_t *)calloc(1, sizeof(mars_model_t));
     if (!model) {
         return MARS_ERR_ALLOC_FAILED;
@@ -150,6 +159,7 @@ mars_error_t mars_load_memory(const void *data, size_t size, mars_model_t **out_
     memcpy(&model->header, &header, sizeof(header));
 
     /* Allocate tensors array */
+    fprintf(stderr, "Mars: Allocating %u tensors...\n", header.num_tensors); fflush(stderr);
     model->tensors = (mars_runtime_tensor_t *)calloc(header.num_tensors,
                                                        sizeof(mars_runtime_tensor_t));
     if (!model->tensors) {
@@ -162,8 +172,10 @@ mars_error_t mars_load_memory(const void *data, size_t size, mars_model_t **out_
         memcpy(&model->tensors[i].desc, ptr, sizeof(mars_tensor_t));
         ptr += sizeof(mars_tensor_t);
     }
+    fprintf(stderr, "Mars: Tensors loaded\n"); fflush(stderr);
 
     /* Allocate layers array */
+    fprintf(stderr, "Mars: Allocating %u layers...\n", header.num_layers); fflush(stderr);
     model->layers = (mars_runtime_layer_t *)calloc(header.num_layers,
                                                      sizeof(mars_runtime_layer_t));
     if (!model->layers) {
@@ -177,16 +189,24 @@ mars_error_t mars_load_memory(const void *data, size_t size, mars_model_t **out_
         memcpy(&model->layers[i].desc, ptr, sizeof(mars_layer_t));
         ptr += sizeof(mars_layer_t);
     }
+    fprintf(stderr, "Mars: Layers loaded\n"); fflush(stderr);
 
     /* Get NNA resources */
+    fprintf(stderr, "Mars: Getting NNA resources...\n"); fflush(stderr);
     model->ddr_base = nna_device_get_ddr();
+    fprintf(stderr, "Mars: ddr_base=%p\n", model->ddr_base); fflush(stderr);
     model->ddr_paddr = (void *)(uintptr_t)nna_device_get_ddr_pbase();
+    fprintf(stderr, "Mars: ddr_paddr=%p\n", model->ddr_paddr); fflush(stderr);
     model->ddr_size = 8 * 1024 * 1024;  /* 8MB */
     model->oram_base = nna_device_get_oram();
+    fprintf(stderr, "Mars: oram_base=%p\n", model->oram_base); fflush(stderr);
     model->oram_paddr = model->oram_base;  /* TODO: get actual paddr */
     model->oram_size = 384 * 1024;  /* 384KB */
 
     /* Load weights into DDR */
+    fprintf(stderr, "Mars: Loading weights (offset=%llu, size=%llu)\n",
+            (unsigned long long)header.weights_offset, (unsigned long long)header.weights_size);
+    fflush(stderr);
     if (header.weights_size > 0) {
         const uint8_t *weights_src = (const uint8_t *)data + header.weights_offset;
         model->weights_size = header.weights_size;
@@ -200,9 +220,12 @@ mars_error_t mars_load_memory(const void *data, size_t size, mars_model_t **out_
             return MARS_ERR_ALLOC_FAILED;
         }
 
+        fprintf(stderr, "Mars: Copying %zu bytes to DDR at %p\n",
+                model->weights_size, model->ddr_base);
         /* Copy weights to DDR */
         memcpy(model->ddr_base, weights_src, model->weights_size);
         model->weights = model->ddr_base;
+        fprintf(stderr, "Mars: Weights loaded successfully\n");
     }
 
     /*
@@ -226,30 +249,53 @@ mars_error_t mars_load_memory(const void *data, size_t size, mars_model_t **out_
         }
     }
 
-    /* Allocate two working buffers (ping-pong) plus one extra for skip connections */
+    /*
+     * Smart buffer allocation:
+     * For simple sequential models: 2 buffers (ping-pong) is enough
+     * For models with skip connections: need 3+ buffers
+     *
+     * Try progressively smaller allocations:
+     * 1. 3 buffers at max size
+     * 2. 2 buffers at max size
+     * 3. 2 buffers with limited size (tile if needed)
+     */
     size_t num_buffers = 3;
     size_t buffer_size = max_tensor_size;
     size_t total_buffer = buffer_size * num_buffers;
 
-    fprintf(stderr, "Mars: Max tensor size: %zu, buffers: %zu x %zu = %zu bytes\n",
-            max_tensor_size, num_buffers, buffer_size, total_buffer);
+    fprintf(stderr, "Mars: Max tensor size: %zu, DDR remaining: %zu\n",
+            max_tensor_size, ddr_remaining);
 
+    /* Try 3 buffers first */
     if (total_buffer > ddr_remaining) {
-        /* Fall back to smaller buffers or fail gracefully */
-        fprintf(stderr, "Mars: Need %zu bytes for buffers, have %zu\n",
+        fprintf(stderr, "Mars: 3 buffers too large (%zu > %zu), trying 2\n",
                 total_buffer, ddr_remaining);
-        /* Try with just 2 buffers */
         num_buffers = 2;
         total_buffer = buffer_size * num_buffers;
-        if (total_buffer > ddr_remaining) {
-            fprintf(stderr, "Mars: Out of DDR memory (need %zu, have %zu)\n",
-                    total_buffer, ddr_remaining);
+    }
+
+    /* Try 2 buffers */
+    if (total_buffer > ddr_remaining) {
+        /* Calculate max buffer size that fits */
+        buffer_size = (ddr_remaining / 2) & ~63UL;  /* 64-byte aligned */
+        total_buffer = buffer_size * 2;
+
+        if (buffer_size < 65536) {  /* Minimum 64KB per buffer */
+            fprintf(stderr, "Mars: Out of DDR memory (need 2x%zu, have %zu)\n",
+                    max_tensor_size, ddr_remaining);
             free(model->layers);
             free(model->tensors);
             free(model);
             return MARS_ERR_ALLOC_FAILED;
         }
+
+        fprintf(stderr, "Mars: Using reduced buffer size: %zu (max tensor needs %zu)\n",
+                buffer_size, max_tensor_size);
+        fprintf(stderr, "Mars: WARNING - large tensors will need tiling!\n");
     }
+
+    fprintf(stderr, "Mars: Allocated %zu buffers x %zu bytes = %zu total\n",
+            num_buffers, buffer_size, total_buffer);
 
     /* Working buffer pointers - store in model for later use */
     uint8_t *work_buffers[3];
@@ -294,30 +340,38 @@ mars_error_t mars_load_memory(const void *data, size_t size, mars_model_t **out_
 }
 
 mars_error_t mars_load_file(const char *path, mars_model_t **model) {
+    fprintf(stderr, "Mars: Opening file %s\n", path); fflush(stderr);
+
     FILE *fp = fopen(path, "rb");
     if (!fp) {
         fprintf(stderr, "Mars: Cannot open %s\n", path);
         return MARS_ERR_INVALID_FILE;
     }
+    fprintf(stderr, "Mars: File opened, getting size...\n"); fflush(stderr);
 
     fseek(fp, 0, SEEK_END);
     long size = ftell(fp);
     fseek(fp, 0, SEEK_SET);
+    fprintf(stderr, "Mars: File size = %ld bytes\n", size); fflush(stderr);
 
     void *data = malloc(size);
     if (!data) {
         fclose(fp);
         return MARS_ERR_ALLOC_FAILED;
     }
+    fprintf(stderr, "Mars: Allocated buffer at %p\n", data); fflush(stderr);
 
+    fprintf(stderr, "Mars: Reading file...\n"); fflush(stderr);
     if (fread(data, 1, size, fp) != (size_t)size) {
         free(data);
         fclose(fp);
         return MARS_ERR_INVALID_FILE;
     }
     fclose(fp);
+    fprintf(stderr, "Mars: File read complete\n"); fflush(stderr);
 
     mars_error_t err = mars_load_memory(data, size, model);
+    fprintf(stderr, "Mars: mars_load_memory returned %d\n", err); fflush(stderr);
     free(data);  /* Model copies what it needs */
     return err;
 }
