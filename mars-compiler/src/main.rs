@@ -33,6 +33,11 @@ struct Args {
     #[arg(short, long)]
     float32: bool,
 
+    /// Use NHWC format for features (channels-last, faster gather)
+    /// Default is NCHW (channels-first, ONNX native)
+    #[arg(long)]
+    nhwc: bool,
+
     /// Verbose output
     #[arg(short, long)]
     verbose: bool,
@@ -74,11 +79,12 @@ struct MarsCompiler {
     weights_data: Vec<u8>,
     tensor_map: HashMap<String, u32>,  // ONNX tensor name -> Mars tensor ID
     quantize: bool,
+    use_nhwc: bool,  // Use NHWC format for features (faster gather on device)
     verbose: bool,
 }
 
 impl MarsCompiler {
-    fn new(onnx: OnnxModel, quantize: bool, verbose: bool) -> Self {
+    fn new(onnx: OnnxModel, quantize: bool, use_nhwc: bool, verbose: bool) -> Self {
         Self {
             onnx,
             tensors: Vec::new(),
@@ -86,6 +92,7 @@ impl MarsCompiler {
             weights_data: Vec::new(),
             tensor_map: HashMap::new(),
             quantize,
+            use_nhwc,
             verbose,
         }
     }
@@ -135,24 +142,37 @@ impl MarsCompiler {
     fn create_input_tensors(&mut self) -> Result<()> {
         for input in &self.onnx.inputs {
             let id = self.tensors.len() as u32;
-            
+
             let mut tensor = MarsTensor::new(id, &input.name);
             tensor.ndims = input.dims.len() as u32;
-            for (i, &dim) in input.dims.iter().enumerate() {
-                if i < MARS_MAX_DIMS {
-                    tensor.shape[i] = dim.max(1) as i32;
+
+            if self.use_nhwc && input.dims.len() == 4 {
+                // Convert shape from NCHW to NHWC: [N,C,H,W] -> [N,H,W,C]
+                tensor.shape[0] = input.dims[0].max(1) as i32;  // N
+                tensor.shape[1] = input.dims[2].max(1) as i32;  // H
+                tensor.shape[2] = input.dims[3].max(1) as i32;  // W
+                tensor.shape[3] = input.dims[1].max(1) as i32;  // C
+                tensor.format = DataFormat::Nhwc;
+            } else {
+                // Keep NCHW format (ONNX native)
+                for (i, &dim) in input.dims.iter().enumerate() {
+                    if i < MARS_MAX_DIMS {
+                        tensor.shape[i] = dim.max(1) as i32;
+                    }
                 }
+                tensor.format = DataFormat::Nchw;
             }
-            // Input is NCHW from ONNX, convert to NHWC for NNA
-            tensor.format = DataFormat::Nhwc;
             tensor.dtype = if self.quantize { DataType::Int8 } else { DataType::Float32 };
-            
+
+            if self.verbose {
+                let fmt = if self.use_nhwc { "NHWC" } else { "NCHW" };
+                let ndims = tensor.ndims as usize;
+                println!("Input tensor {}: {} {:?} ({})", id, input.name,
+                    &tensor.shape[..ndims], fmt);
+            }
+
             self.tensor_map.insert(input.name.clone(), id);
             self.tensors.push(tensor);
-            
-            if self.verbose {
-                println!("Input tensor {}: {} {:?}", id, input.name, input.dims);
-            }
         }
         Ok(())
     }
@@ -195,7 +215,7 @@ impl MarsCompiler {
         Ok(())
     }
 
-    /// Create or get a feature tensor (uses NDHWC32 format for NNA)
+    /// Create or get a feature tensor
     fn get_or_create_tensor(&mut self, name: &str) -> u32 {
         if let Some(&id) = self.tensor_map.get(name) {
             return id;
@@ -204,15 +224,24 @@ impl MarsCompiler {
         let id = self.tensors.len() as u32;
         let mut tensor = MarsTensor::new(id, name);
         tensor.dtype = if self.quantize { DataType::Int8 } else { DataType::Float32 };
-        // Use NNA native format for features: NDHWC32 (32-channel groups)
-        tensor.format = DataFormat::Ndhwc32;
 
-        // Try to get shape from ONNX shape_info
+        // Use NHWC or NCHW based on compiler settings
+        tensor.format = if self.use_nhwc { DataFormat::Nhwc } else { DataFormat::Nchw };
+
+        // Try to get shape from ONNX shape_info (ONNX uses NCHW)
         if let Some(dims) = self.onnx.shape_info.get(name) {
             tensor.ndims = dims.len() as u32;
-            for (i, &dim) in dims.iter().enumerate() {
-                if i < MARS_MAX_DIMS {
-                    tensor.shape[i] = dim.max(1) as i32;
+            if self.use_nhwc && dims.len() == 4 {
+                // Convert NCHW -> NHWC shape
+                tensor.shape[0] = dims[0].max(1) as i32;  // N
+                tensor.shape[1] = dims[2].max(1) as i32;  // H
+                tensor.shape[2] = dims[3].max(1) as i32;  // W
+                tensor.shape[3] = dims[1].max(1) as i32;  // C
+            } else {
+                for (i, &dim) in dims.iter().enumerate() {
+                    if i < MARS_MAX_DIMS {
+                        tensor.shape[i] = dim.max(1) as i32;
+                    }
                 }
             }
         }
@@ -320,19 +349,18 @@ impl MarsCompiler {
         let kh = weight_tensor.dims.get(2).copied().unwrap_or(3) as u32;
         let kw = weight_tensor.dims.get(3).copied().unwrap_or(3) as u32;
 
-        // Process weights - pack differently based on quantization
+        // Process weights - pack based on quantization and feature format
         let (weight_data, scale, weight_format) = if self.quantize {
-            // INT8: Quantize and pack in NMHWSOIB2 format (NNA native)
             let (quant_weights, scale) = self.quantize_weights(&weight_tensor.data);
-            let int8_weights: Vec<i8> = quant_weights.iter().map(|&b| b as i8).collect();
-            let packed_weights = pack_weights_nmhwsoib2(
-                &int8_weights,
-                out_ch as usize,
-                in_ch as usize,
-                kh as usize,
-                kw as usize,
-            );
-            (packed_weights, scale, DataFormat::Nmhwsoib2)
+            if self.use_nhwc {
+                // INT8 + NHWC: Convert OIHW -> OHWI for NHWC convolution
+                let ohwi_weights = convert_oihw_to_ohwi(&quant_weights,
+                    out_ch as usize, in_ch as usize, kh as usize, kw as usize);
+                (ohwi_weights, scale, DataFormat::Ohwi)
+            } else {
+                // INT8 + NCHW: Keep OIHW format
+                (quant_weights, scale, DataFormat::Oihw)
+            }
         } else {
             // Float32: Store as-is in OIHW format (standard ONNX layout)
             (weight_tensor.data.clone(), 1.0, DataFormat::Oihw)
@@ -400,14 +428,25 @@ impl MarsCompiler {
         let pad_b = pads.get(2).copied().unwrap_or(0) as i32;
         let pad_r = pads.get(3).copied().unwrap_or(0) as i32;
 
-        // Input is NCHW in ONNX, shape[1] = C, shape[2] = H, shape[3] = W
-        let in_h = input_shape[2];
-        let in_w = input_shape[3];
+        // Get spatial dimensions based on data format
+        let (in_h, in_w) = if self.use_nhwc {
+            // NHWC: shape = [N, H, W, C]
+            (input_shape[1], input_shape[2])
+        } else {
+            // NCHW: shape = [N, C, H, W]
+            (input_shape[2], input_shape[3])
+        };
         let out_h = (in_h + pad_t + pad_b - dh * (kh as i32 - 1) - 1) / sh + 1;
         let out_w = (in_w + pad_l + pad_r - dw * (kw as i32 - 1) - 1) / sw + 1;
 
-        // Output shape: [N, out_ch, out_h, out_w] in NCHW
-        self.update_tensor_shape(output_id, &[input_shape[0], out_ch as i32, out_h, out_w]);
+        // Output shape based on format
+        if self.use_nhwc {
+            // NHWC: [N, H, W, C]
+            self.update_tensor_shape(output_id, &[input_shape[0], out_h, out_w, out_ch as i32]);
+        } else {
+            // NCHW: [N, C, H, W]
+            self.update_tensor_shape(output_id, &[input_shape[0], out_ch as i32, out_h, out_w]);
+        }
 
         // Determine layer type (depthwise vs regular conv)
         let layer_type = if group > 1 && group == in_ch && group == out_ch {
@@ -681,8 +720,19 @@ impl MarsCompiler {
 
         // Handle negative axis (common in ONNX: -1 means last dim)
         let raw_axis = node.get_int("axis").unwrap_or(1);
-        let axis = if raw_axis < 0 { (4 + raw_axis) as u32 } else { raw_axis as u32 };
-        let axis = axis.min(3);  // Clamp to valid range
+        let mut axis = if raw_axis < 0 { (4 + raw_axis) as u32 } else { raw_axis as u32 };
+        axis = axis.min(3);  // Clamp to valid range
+
+        // Adjust axis for NHWC format: NCHW axis 1 (C) -> NHWC axis 3
+        // NCHW [N,C,H,W] vs NHWC [N,H,W,C]
+        if self.use_nhwc && axis > 0 {
+            axis = match axis {
+                1 => 3,  // C dimension: NCHW[1] -> NHWC[3]
+                2 => 1,  // H dimension: NCHW[2] -> NHWC[1]
+                3 => 2,  // W dimension: NCHW[3] -> NHWC[2]
+                _ => axis,
+            };
+        }
 
         let mut layer = MarsLayer::new(layer_id, LayerType::Concat);
         layer.num_inputs = node.inputs.len().min(4) as u32;
@@ -748,11 +798,19 @@ impl MarsCompiler {
             (2, 2)
         };
 
-        // Calculate output shape
+        // Calculate output shape based on format
         let input_shape = self.get_tensor_shape(input_id);
-        let out_h = input_shape[2] * scale_h as i32;
-        let out_w = input_shape[3] * scale_w as i32;
-        self.update_tensor_shape(output_id, &[input_shape[0], input_shape[1], out_h, out_w]);
+        if self.use_nhwc {
+            // NHWC: [N, H, W, C]
+            let out_h = input_shape[1] * scale_h as i32;
+            let out_w = input_shape[2] * scale_w as i32;
+            self.update_tensor_shape(output_id, &[input_shape[0], out_h, out_w, input_shape[3]]);
+        } else {
+            // NCHW: [N, C, H, W]
+            let out_h = input_shape[2] * scale_h as i32;
+            let out_w = input_shape[3] * scale_w as i32;
+            self.update_tensor_shape(output_id, &[input_shape[0], input_shape[1], out_h, out_w]);
+        }
 
         let mode = node.get_string("mode").unwrap_or("nearest");
         let mode_val = if mode == "bilinear" || mode == "linear" { 1 } else { 0 };
@@ -955,8 +1013,10 @@ fn main() -> Result<()> {
     // Compile to Mars
     // If --float32 is specified, don't quantize (keep float32 weights)
     let quantize = !args.float32;
+    let use_nhwc = args.nhwc;
     println!("Quantization: {}", if quantize { "INT8" } else { "FLOAT32 (no quantization)" });
-    let mut compiler = MarsCompiler::new(onnx, quantize, args.verbose);
+    println!("Feature format: {}", if use_nhwc { "NHWC (channels-last)" } else { "NCHW (channels-first)" });
+    let mut compiler = MarsCompiler::new(onnx, quantize, use_nhwc, args.verbose);
     compiler.compile()?;
 
     // Write output

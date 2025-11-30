@@ -42,15 +42,16 @@ typedef enum {
 } mars_dtype_t;
 
 /* Tensor format - matching NNA hardware expectations */
+/* NOTE: NCHW = 0 for backward compatibility with old models */
 typedef enum {
-    MARS_FORMAT_NHWC = 0,       /* Feature: [N, H, W, C] - basic layout */
+    MARS_FORMAT_NCHW = 0,       /* Feature: [N, C, H, W] - ONNX default (legacy default) */
     MARS_FORMAT_NDHWC32 = 1,    /* Feature: [N, D_C32, H, W, 32] - NNA native, 32-channel groups */
     MARS_FORMAT_HWIO = 2,       /* Weight: [H, W, I, O] */
     MARS_FORMAT_NMHWSOIB2 = 3,  /* Weight: [N_OFP, M_IFP, H, W, S, OFP, IFP] - NNA packed */
     MARS_FORMAT_NMC32 = 4,      /* Bias/BN: [N_OFP, M_BT, 32] */
     MARS_FORMAT_D1 = 5,         /* Scale/LUT: [d1] */
     MARS_FORMAT_OHWI = 6,       /* Weight: [O, H, W, I] */
-    MARS_FORMAT_NCHW = 7,       /* Feature: [N, C, H, W] - ONNX default */
+    MARS_FORMAT_NHWC = 7,       /* Feature: [N, H, W, C] - channels-last (faster gather) */
     MARS_FORMAT_OIHW = 8,       /* Weight: [O, I, H, W] - ONNX default */
 } mars_format_t;
 

@@ -18,7 +18,7 @@ LIB_DIR := $(BUILD_DIR)/lib
 BIN_DIR := $(BUILD_DIR)/bin
 
 # Compiler flags
-CFLAGS := -Wall -Wextra -O2 -fPIC
+CFLAGS := -Wall -Wextra -O3 -fPIC -funroll-loops
 CFLAGS += -I$(INC_DIR) -I$(SRC_DIR)
 CXXFLAGS := -Wall -Wextra -O2 -fPIC -std=c++14 -D_GLIBCXX_USE_CXX11_ABI=1
 CXXFLAGS += -I$(INC_DIR) -I$(SRC_DIR)

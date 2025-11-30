@@ -29,18 +29,19 @@ pub enum DataType {
     Uint4 = 5,
 }
 
-/// Data formats - matching NNA hardware expectations from uranus_common_type.h
+/// Data formats - matching NNA hardware expectations
+/// NOTE: NCHW = 0 for backward compatibility with old models
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
 pub enum DataFormat {
-    Nhwc = 0,       // Feature: [N, H, W, C] - basic layout
+    Nchw = 0,       // Feature: [N, C, H, W] - ONNX default (legacy default)
     Ndhwc32 = 1,    // Feature: [N, D_C32, H, W, CHN_32] - NNA native, 32-channel groups
     Hwio = 2,       // Weight: [H, W, I, O]
     Nmhwsoib2 = 3,  // Weight: [N_OFP, M_IFP, H, W, S_BIT2, OFP, IFP] - NNA native packed
     Nmc32 = 4,      // Bias/BN: [N_OFP, M_BT, CHN_32]
     D1 = 5,         // Scale/LUT: [d1]
     Ohwi = 6,       // Weight: [O, H, W, I]
-    Nchw = 7,       // Feature: [N, C, H, W] - ONNX default
+    Nhwc = 7,       // Feature: [N, H, W, C] - channels-last (faster gather)
     Oihw = 8,       // Weight: [O, I, H, W] - ONNX default
 }
 
@@ -395,6 +396,42 @@ impl MarsLayer {
     }
 }
 
+
+/// Convert weights from OIHW (ONNX) to OHWI (NHWC-friendly) format
+///
+/// OIHW: [out_ch, in_ch, kh, kw]
+/// OHWI: [out_ch, kh, kw, in_ch]
+///
+/// This makes weight access contiguous when iterating over input channels,
+/// which is efficient for NHWC feature format.
+pub fn convert_oihw_to_ohwi(
+    weights: &[u8],
+    out_ch: usize,
+    in_ch: usize,
+    kh: usize,
+    kw: usize,
+) -> Vec<u8> {
+    let total = out_ch * in_ch * kh * kw;
+    let mut output = vec![0u8; total];
+
+    for o in 0..out_ch {
+        for i in 0..in_ch {
+            for h in 0..kh {
+                for w in 0..kw {
+                    // Source: OIHW [o, i, h, w]
+                    let src_idx = ((o * in_ch + i) * kh + h) * kw + w;
+                    // Dest: OHWI [o, h, w, i]
+                    let dst_idx = ((o * kh + h) * kw + w) * in_ch + i;
+                    if src_idx < weights.len() && dst_idx < output.len() {
+                        output[dst_idx] = weights[src_idx];
+                    }
+                }
+            }
+        }
+    }
+
+    output
+}
 
 /// Pack weights from OIHW (ONNX) to NMHWSOIB2 (NNA native format)
 ///

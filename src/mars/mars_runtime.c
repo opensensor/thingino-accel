@@ -28,6 +28,15 @@ extern void conv2d_int8_mxu(
     int pad_top, int pad_left,
     float in_scale, float w_scale, float out_scale);
 
+extern void conv2d_int8_nhwc_mxu(
+    const int8_t *input, int in_h, int in_w, int in_c,
+    const int8_t *weight, int out_c, int kh, int kw,
+    const int32_t *bias,
+    int8_t *output, int out_h, int out_w,
+    int stride_h, int stride_w,
+    int pad_top, int pad_left,
+    float in_scale, float w_scale, float out_scale);
+
 extern void conv2d_float32_mxu(
     const float *input, int in_h, int in_w, int in_c,
     const float *weight, int out_c, int kh, int kw,
@@ -548,13 +557,36 @@ static mars_error_t execute_conv2d(mars_model_t *model, mars_runtime_layer_t *la
         }
     }
 
-    /* Extract dimensions - NCHW format (batch, channels, height, width) */
-    int in_c = input->desc.shape[1];
-    int in_h = input->desc.shape[2];
-    int in_w = input->desc.shape[3];
-    int out_c = output->desc.shape[1];
-    int out_h = output->desc.shape[2];
-    int out_w = output->desc.shape[3];
+    /* Check data format - NHWC (7) or NCHW (0) */
+    int is_nhwc = (input->desc.format == MARS_FORMAT_NHWC);
+    int out_is_nhwc = (output->desc.format == MARS_FORMAT_NHWC);
+
+    /* Extract dimensions based on format */
+    int in_c, in_h, in_w, out_c, out_h, out_w;
+    if (is_nhwc) {
+        /* NHWC: [N, H, W, C] */
+        in_h = input->desc.shape[1];
+        in_w = input->desc.shape[2];
+        in_c = input->desc.shape[3];
+    } else {
+        /* NCHW: [N, C, H, W] */
+        in_c = input->desc.shape[1];
+        in_h = input->desc.shape[2];
+        in_w = input->desc.shape[3];
+    }
+
+    /* Output format should match input format */
+    if (out_is_nhwc) {
+        /* NHWC: [N, H, W, C] */
+        out_h = output->desc.shape[1];
+        out_w = output->desc.shape[2];
+        out_c = output->desc.shape[3];
+    } else {
+        /* NCHW: [N, C, H, W] */
+        out_c = output->desc.shape[1];
+        out_h = output->desc.shape[2];
+        out_w = output->desc.shape[3];
+    }
 
     /* Calculate padding for SAME mode */
     int pad_top = 0, pad_left = 0;
@@ -568,11 +600,12 @@ static mars_error_t execute_conv2d(mars_model_t *model, mars_runtime_layer_t *la
     /* Check if float32 model */
     int is_float = (input->desc.dtype == MARS_DTYPE_FLOAT32);
 
-    printf("  Conv2D: %dx%dx%d -> %dx%dx%d (k=%dx%d, s=%d) [%s%s]\n",
+    printf("  Conv2D: %dx%dx%d -> %dx%dx%d (k=%dx%d, s=%d) [%s%s%s]\n",
            in_h, in_w, in_c, out_h, out_w, out_c,
            params->kernel_h, params->kernel_w, params->stride_h,
            is_float ? "F32-" : "INT8-",
-           USE_MXU ? "MXU" : "SW");
+           USE_MXU ? "MXU" : "SW",
+           is_nhwc ? "-NHWC" : "");
 
 #if USE_MXU
     if (is_float) {
@@ -588,8 +621,19 @@ static mars_error_t execute_conv2d(mars_model_t *model, mars_runtime_layer_t *la
             pad_top, pad_left,
             scratch
         );
+    } else if (is_nhwc) {
+        /* INT8 NHWC MXU-accelerated convolution - faster gather */
+        conv2d_int8_nhwc_mxu(
+            (int8_t *)input->vaddr, in_h, in_w, in_c,
+            (int8_t *)weight->vaddr, out_c, params->kernel_h, params->kernel_w,
+            bias ? (int32_t *)bias->vaddr : NULL,
+            (int8_t *)output->vaddr, out_h, out_w,
+            params->stride_h, params->stride_w,
+            pad_top, pad_left,
+            input->desc.scale, weight->desc.scale, output->desc.scale
+        );
     } else {
-        /* INT8 MXU-accelerated convolution */
+        /* INT8 NCHW MXU-accelerated convolution */
         conv2d_int8_mxu(
             (int8_t *)input->vaddr, in_h, in_w, in_c,
             (int8_t *)weight->vaddr, out_c, params->kernel_h, params->kernel_w,
@@ -612,9 +656,20 @@ static mars_error_t execute_conv2d(mars_model_t *model, mars_runtime_layer_t *la
             pad_top, pad_left,
             NULL
         );
+    } else if (is_nhwc) {
+        /* INT8 NHWC software convolution */
+        conv2d_int8_nhwc_mxu(
+            (int8_t *)input->vaddr, in_h, in_w, in_c,
+            (int8_t *)weight->vaddr, out_c, params->kernel_h, params->kernel_w,
+            bias ? (int32_t *)bias->vaddr : NULL,
+            (int8_t *)output->vaddr, out_h, out_w,
+            params->stride_h, params->stride_w,
+            pad_top, pad_left,
+            input->desc.scale, weight->desc.scale, output->desc.scale
+        );
     } else {
-        /* INT8 software convolution */
-        conv2d_int8_sw(
+        /* INT8 NCHW software convolution */
+        conv2d_int8_mxu(
             (int8_t *)input->vaddr, in_h, in_w, in_c,
             (int8_t *)weight->vaddr, out_c, params->kernel_h, params->kernel_w,
             bias ? (int32_t *)bias->vaddr : NULL,
