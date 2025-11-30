@@ -125,6 +125,10 @@ $(BIN_DIR)/mars_test: $(SRC_DIR)/mars/mars_test.c $(OBJ_DIR)/mars_mars_runtime.o
 	$(CC) $(CFLAGS) $< $(OBJ_DIR)/mars_mars_runtime.o $(MARS_MXU_OBJS) -o $@ $(LDFLAGS) -lnna $(LIBS) -lm
 	@echo "Built Mars test: $@"
 
+$(BIN_DIR)/mars_yolo_test: $(SRC_DIR)/mars/mars_yolo_test.c $(OBJ_DIR)/mars_mars_runtime.o $(MARS_MXU_OBJS) $(LIB_NNA_STATIC) | $(BIN_DIR)
+	$(CC) $(CFLAGS) $< $(OBJ_DIR)/mars_mars_runtime.o $(MARS_MXU_OBJS) -o $@ $(LDFLAGS) -lnna $(LIBS) -lm
+	@echo "Built Mars YOLO test: $@"
+
 # NNA DMA object
 $(OBJ_DIR)/nna_dma.o: $(SRC_DIR)/nna_dma.c | $(OBJ_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@

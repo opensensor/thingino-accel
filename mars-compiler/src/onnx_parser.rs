@@ -41,6 +41,8 @@ impl TensorDataType {
             3 => Self::Int8,
             6 => Self::Int32,
             7 => Self::Int64,
+            10 => Self::Float16,
+            11 => Self::Double,
             _ => Self::Undefined,
         }
     }
@@ -237,11 +239,18 @@ pub struct OnnxTensor {
     pub dims: Vec<i64>,
     pub data_type: TensorDataType,
     pub data: Vec<u8>,
+    pub float_data: Vec<f32>,  // For scalars stored in float_data field
 }
 
 impl OnnxTensor {
     pub fn from_proto(proto: &TensorProto) -> Self {
         let data_type = TensorDataType::from_i32(proto.data_type);
+
+        // Debug: warn if data_type is undefined
+        if data_type == TensorDataType::Undefined && proto.data_type != 0 {
+            eprintln!("Warning: Unknown ONNX data_type {} for tensor {}",
+                     proto.data_type, proto.name);
+        }
 
         // Get raw data - either from raw_data or typed arrays
         let data = if !proto.raw_data.is_empty() {
@@ -262,11 +271,15 @@ impl OnnxTensor {
             Vec::new()
         };
 
+        // Keep float_data for scalar scales (QDQ models store scales in float_data)
+        let float_data = proto.float_data.clone();
+
         Self {
             name: proto.name.clone(),
             dims: proto.dims.clone(),
             data_type,
             data,
+            float_data,
         }
     }
 

@@ -97,7 +97,11 @@ int main(int argc, char *argv[]) {
     }
 
     /* Get output */
+    /* Print input tensor scale */
+    printf("\nInput tensor scale: %.6f\n", input->desc.scale);
+
     mars_runtime_tensor_t *output = mars_get_output(model, 0);
+    printf("\nOutput tensor ptr: %p, vaddr: %p\n", (void*)output, output ? output->vaddr : NULL);
     if (output && output->vaddr) {
         printf("\nOutput tensor:\n");
         printf("  Name: %s\n", output->desc.name);
@@ -107,6 +111,7 @@ int main(int argc, char *argv[]) {
         }
         printf("]\n");
         printf("  Data type: %s\n", output->desc.dtype == MARS_DTYPE_FLOAT32 ? "float32" : "int8");
+        printf("  Scale: %.6f\n", output->desc.scale);
 
         /* Print first few values based on data type */
         if (output->desc.dtype == MARS_DTYPE_FLOAT32) {

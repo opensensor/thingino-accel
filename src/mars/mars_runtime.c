@@ -600,12 +600,28 @@ static mars_error_t execute_conv2d(mars_model_t *model, mars_runtime_layer_t *la
     /* Check if float32 model */
     int is_float = (input->desc.dtype == MARS_DTYPE_FLOAT32);
 
-    printf("  Conv2D: %dx%dx%d -> %dx%dx%d (k=%dx%d, s=%d) [%s%s%s]\n",
-           in_h, in_w, in_c, out_h, out_w, out_c,
-           params->kernel_h, params->kernel_w, params->stride_h,
-           is_float ? "F32-" : "INT8-",
-           USE_MXU ? "MXU" : "SW",
-           is_nhwc ? "-NHWC" : "");
+    /* Debug: print scales for first few convs */
+    static int conv_count = 0;
+    if (conv_count < 3) {
+        printf("  Conv2D[%d]: %dx%dx%d -> %dx%dx%d (k=%dx%d, s=%d) [%s%s%s]\n",
+               conv_count, in_h, in_w, in_c, out_h, out_w, out_c,
+               params->kernel_h, params->kernel_w, params->stride_h,
+               is_float ? "F32-" : "INT8-",
+               USE_MXU ? "MXU" : "SW",
+               is_nhwc ? "-NHWC" : "");
+        printf("    Scales: in=%.6f w=%.6f out=%.6f\n",
+               input->desc.scale, weight->desc.scale, output->desc.scale);
+        printf("    Combined scale: %.10f\n",
+               (input->desc.scale * weight->desc.scale) / output->desc.scale);
+        conv_count++;
+    } else {
+        printf("  Conv2D: %dx%dx%d -> %dx%dx%d (k=%dx%d, s=%d) [%s%s%s]\n",
+               in_h, in_w, in_c, out_h, out_w, out_c,
+               params->kernel_h, params->kernel_w, params->stride_h,
+               is_float ? "F32-" : "INT8-",
+               USE_MXU ? "MXU" : "SW",
+               is_nhwc ? "-NHWC" : "");
+    }
 
 #if USE_MXU
     if (is_float) {

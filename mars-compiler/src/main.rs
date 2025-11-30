@@ -14,7 +14,36 @@ use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 
 use mars_format::*;
-use onnx_parser::{OnnxModel, OnnxNode};
+use onnx_parser::{OnnxModel, OnnxNode, TensorDataType};
+
+/// Convert IEEE 754 half-precision float (16-bit) to single-precision float (32-bit)
+fn half_to_f32(bits: u16) -> f32 {
+    let sign = ((bits >> 15) & 1) as u32;
+    let exp = ((bits >> 10) & 0x1F) as u32;
+    let mant = (bits & 0x3FF) as u32;
+
+    if exp == 0 {
+        // Subnormal or zero
+        if mant == 0 {
+            return if sign == 1 { -0.0 } else { 0.0 };
+        }
+        // Subnormal: normalize
+        let f = (mant as f32) / 1024.0 * (2.0_f32).powi(-14);
+        return if sign == 1 { -f } else { f };
+    } else if exp == 31 {
+        // Inf or NaN
+        if mant == 0 {
+            return if sign == 1 { f32::NEG_INFINITY } else { f32::INFINITY };
+        }
+        return f32::NAN;
+    }
+
+    // Normal number
+    let exp32 = exp + 127 - 15;  // Adjust exponent bias: fp16 bias=15, fp32 bias=127
+    let mant32 = mant << 13;     // Shift mantissa: fp16 has 10 bits, fp32 has 23 bits
+    let bits32 = (sign << 31) | (exp32 << 23) | mant32;
+    f32::from_bits(bits32)
+}
 
 #[derive(Parser, Debug)]
 #[command(name = "mars")]
@@ -63,7 +92,9 @@ fn map_onnx_op_to_mars(op_type: &str) -> Option<LayerType> {
         "BatchNormalization" => Some(LayerType::BatchNorm),
         // Skip these ops - they get folded or are handled differently
         // Pow is used in SiLU (x * sigmoid(x)) but we handle via Sigmoid+Mul
-        "Constant" | "Shape" | "Gather" | "Slice" | "Split" | "Sub" | "Div" | "Unsqueeze" | "Pow" => None,
+        // QuantizeLinear/DequantizeLinear are QDQ ops - we extract scales but skip the ops
+        "Constant" | "Shape" | "Gather" | "Slice" | "Split" | "Sub" | "Div" | "Unsqueeze" | "Pow"
+            | "QuantizeLinear" | "DequantizeLinear" => None,
         _ => {
             eprintln!("Warning: Unknown op type: {}", op_type);
             None
@@ -78,6 +109,8 @@ struct MarsCompiler {
     layers: Vec<MarsLayer>,
     weights_data: Vec<u8>,
     tensor_map: HashMap<String, u32>,  // ONNX tensor name -> Mars tensor ID
+    qdq_scales: HashMap<String, f32>,  // QDQ scale name -> scale value
+    has_qdq: bool,  // Model has QDQ (QuantizeLinear/DequantizeLinear) nodes
     quantize: bool,
     use_nhwc: bool,  // Use NHWC format for features (faster gather on device)
     verbose: bool,
@@ -91,19 +124,151 @@ impl MarsCompiler {
             layers: Vec::new(),
             weights_data: Vec::new(),
             tensor_map: HashMap::new(),
+            qdq_scales: HashMap::new(),
+            has_qdq: false,
             quantize,
             use_nhwc,
             verbose,
         }
     }
-    
+
+    /// Parse QDQ (QuantizeLinear/DequantizeLinear) scales from the model
+    /// These come from calibration and provide proper per-tensor scales
+    fn parse_qdq_scales(&mut self) -> Result<()> {
+        // Check if model has QDQ nodes
+        let qdq_count = self.onnx.nodes.iter()
+            .filter(|n| n.op_type == "QuantizeLinear" || n.op_type == "DequantizeLinear")
+            .count();
+
+        if qdq_count == 0 {
+            if self.verbose {
+                println!("No QDQ nodes found - using heuristic quantization");
+            }
+            return Ok(());
+        }
+
+        self.has_qdq = true;
+        if self.verbose {
+            println!("Found {} QDQ nodes - using calibrated scales", qdq_count);
+        }
+
+        // Extract scales from initializers (they have names ending in "_scale")
+        for (name, tensor) in &self.onnx.initializers {
+            if name.ends_with("_scale") {
+                // Scale is a scalar float32 - may be in raw_data or float_data
+                let scale = if !tensor.data.is_empty() {
+                    if tensor.data.len() >= 4 {
+                        f32::from_le_bytes([tensor.data[0], tensor.data[1],
+                                           tensor.data[2], tensor.data[3]])
+                    } else if tensor.data.len() >= 2 {
+                        // Float16 scale
+                        let bits = u16::from_le_bytes([tensor.data[0], tensor.data[1]]);
+                        half_to_f32(bits)
+                    } else {
+                        continue;
+                    }
+                } else if !tensor.float_data.is_empty() {
+                    // Scale stored in float_data field
+                    tensor.float_data[0]
+                } else {
+                    continue;
+                };
+
+                // Map scale to the tensor it quantizes
+                // E.g., "images_scale" -> "images", "model.0.conv.weight_scale" -> "model.0.conv.weight"
+                let tensor_name = name.trim_end_matches("_scale");
+                self.qdq_scales.insert(tensor_name.to_string(), scale);
+
+                if self.verbose && self.qdq_scales.len() <= 10 {
+                    println!("  QDQ scale: {} = {}", tensor_name, scale);
+                }
+            }
+        }
+
+        // Also parse QuantizeLinear nodes to find scale mappings for shared scales
+        // E.g., MaxPool output might use the same scale as a previous Conv output
+        for node in &self.onnx.nodes {
+            if node.op_type == "QuantizeLinear" {
+                // QuantizeLinear has inputs: [tensor, scale, zero_point]
+                if node.inputs.len() >= 2 {
+                    let input_tensor = &node.inputs[0];
+                    let scale_name = &node.inputs[1];
+
+                    // If the scale is in qdq_scales (by its base name), map this tensor to it
+                    let scale_base = scale_name.trim_end_matches("_scale");
+                    if let Some(&scale) = self.qdq_scales.get(scale_base) {
+                        // Map the input tensor to this scale
+                        if !self.qdq_scales.contains_key(input_tensor) {
+                            self.qdq_scales.insert(input_tensor.clone(), scale);
+                        }
+                    }
+                }
+            }
+        }
+
+        if self.verbose {
+            println!("Loaded {} QDQ scales (including shared)", self.qdq_scales.len());
+        }
+
+        Ok(())
+    }
+
+    /// Get QDQ scale for a tensor name, trying various name patterns
+    fn get_qdq_scale(&self, name: &str) -> Option<f32> {
+        // Direct lookup
+        if let Some(&scale) = self.qdq_scales.get(name) {
+            return Some(scale);
+        }
+
+        // Try with common suffixes stripped
+        // Conv output patterns: "/model.0/conv/Conv_output_0" or "model.0.conv.output"
+
+        // For DequantizeLinear outputs: "images_DequantizeLinear_Output" -> "images"
+        // or "model.0.conv.weight_DequantizeLinear_Output" -> "model.0.conv.weight"
+        if name.ends_with("_DequantizeLinear_Output") {
+            let base = name.trim_end_matches("_DequantizeLinear_Output");
+            if let Some(&scale) = self.qdq_scales.get(base) {
+                return Some(scale);
+            }
+        }
+
+        // For QuantizeLinear outputs: "images_QuantizeLinear_Output" -> "images"
+        if name.ends_with("_QuantizeLinear_Output") {
+            let base = name.trim_end_matches("_QuantizeLinear_Output");
+            if let Some(&scale) = self.qdq_scales.get(base) {
+                return Some(scale);
+            }
+        }
+
+        // For QuantizeLinear inputs: "output0_QuantizeLinear_Input" -> "output0"
+        if name.ends_with("_QuantizeLinear_Input") {
+            let base = name.trim_end_matches("_QuantizeLinear_Input");
+            if let Some(&scale) = self.qdq_scales.get(base) {
+                return Some(scale);
+            }
+        }
+
+        // For quantized weights: check if there's a scale for the base name
+        if name.ends_with("_quantized") {
+            let base = name.trim_end_matches("_quantized");
+            if let Some(&scale) = self.qdq_scales.get(base) {
+                return Some(scale);
+            }
+        }
+
+        None
+    }
+
     /// Compile the ONNX model to Mars format
     fn compile(&mut self) -> Result<()> {
         if self.verbose {
             self.onnx.print_summary();
             println!("\nCompiling to Mars format...\n");
         }
-        
+
+        // Step 0: Parse QDQ scales if present
+        self.parse_qdq_scales()?;
+
         // Step 1: Create input tensors
         self.create_input_tensors()?;
         
@@ -132,11 +297,111 @@ impl MarsCompiler {
         if let Some(pb) = pb {
             pb.finish_with_message("Done");
         }
-        
-        // Step 3: Mark output tensors
+
+        // Step 3: Propagate scales through the graph
+        // Some tensors may not have scales set if they were created before their producer layer
+        self.propagate_scales();
+
+        // Step 4: Mark output tensors
         self.mark_outputs()?;
-        
+
         Ok(())
+    }
+
+    /// Propagate scales through the graph for tensors that don't have explicit QDQ scales
+    fn propagate_scales(&mut self) {
+        // Run multiple iterations to handle chains of layers
+        for _iter in 0..5 {
+            let mut any_updated = false;
+
+            for layer_idx in 0..self.layers.len() {
+                let layer = &self.layers[layer_idx];
+                let layer_type = layer.layer_type.clone();
+                let output_id = layer.output_tensor_ids[0];
+                let num_inputs = layer.num_inputs as usize;
+                let input_ids: Vec<u32> = (0..num_inputs)
+                    .map(|i| layer.input_tensor_ids[i])
+                    .collect();
+
+                let out_scale = self.tensors.get(output_id as usize).map(|t| t.scale).unwrap_or(1.0);
+
+                // Skip if output already has a non-default scale
+                if (out_scale - 1.0).abs() > 0.0001 {
+                    continue;
+                }
+
+                // Compute the scale based on layer type
+                let new_scale = match layer_type {
+                    // These layer types preserve input scale
+                    LayerType::Reshape | LayerType::Transpose | LayerType::Softmax
+                    | LayerType::MaxPool | LayerType::AvgPool | LayerType::Upsample => {
+                        let in_scale = self.tensors.get(input_ids[0] as usize)
+                            .map(|t| t.scale).unwrap_or(1.0);
+                        if (in_scale - 1.0).abs() > 0.0001 {
+                            Some(in_scale)
+                        } else {
+                            None
+                        }
+                    },
+                    // Concat uses max of input scales
+                    LayerType::Concat => {
+                        let mut max_scale = 0.0f32;
+                        for &tid in &input_ids {
+                            let s = self.tensors.get(tid as usize).map(|t| t.scale).unwrap_or(1.0);
+                            if (s - 1.0).abs() > 0.0001 {
+                                max_scale = max_scale.max(s);
+                            }
+                        }
+                        if max_scale > 0.0001 {
+                            Some(max_scale)
+                        } else {
+                            None
+                        }
+                    },
+                    // Add preserves input scale (same scale for both inputs ideally)
+                    LayerType::Add => {
+                        let s1 = self.tensors.get(input_ids[0] as usize).map(|t| t.scale).unwrap_or(1.0);
+                        let s2 = if num_inputs > 1 {
+                            self.tensors.get(input_ids[1] as usize).map(|t| t.scale).unwrap_or(1.0)
+                        } else { 1.0 };
+                        let max_s = s1.max(s2);
+                        if (max_s - 1.0).abs() > 0.0001 {
+                            Some(max_s)
+                        } else {
+                            None
+                        }
+                    },
+                    // Mul output scale is product of input scales
+                    LayerType::Mul => {
+                        let s1 = self.tensors.get(input_ids[0] as usize).map(|t| t.scale).unwrap_or(1.0);
+                        let s2 = if num_inputs > 1 {
+                            self.tensors.get(input_ids[1] as usize).map(|t| t.scale).unwrap_or(1.0)
+                        } else { 1.0 };
+                        if (s1 - 1.0).abs() > 0.0001 && (s2 - 1.0).abs() > 0.0001 {
+                            Some(s1 * s2)
+                        } else if (s1 - 1.0).abs() > 0.0001 {
+                            Some(s1)
+                        } else if (s2 - 1.0).abs() > 0.0001 {
+                            Some(s2)
+                        } else {
+                            None
+                        }
+                    },
+                    _ => None,
+                };
+
+                if let Some(scale) = new_scale {
+                    if let Some(tensor) = self.tensors.get_mut(output_id as usize) {
+                        tensor.scale = scale;
+                        any_updated = true;
+                    }
+                }
+            }
+
+            if !any_updated {
+                break;
+            }
+        }
     }
     
     fn create_input_tensors(&mut self) -> Result<()> {
@@ -163,6 +428,21 @@ impl MarsCompiler {
                 tensor.format = DataFormat::Nchw;
             }
             tensor.dtype = if self.quantize { DataType::Int8 } else { DataType::Float32 };
+
+            // Set input scale for INT8
+            if self.quantize {
+                if let Some(scale) = self.get_qdq_scale(&input.name) {
+                    // Use QDQ calibrated scale
+                    tensor.scale = scale;
+                    if self.verbose {
+                        println!("  Using QDQ input scale: {}", scale);
+                    }
+                } else {
+                    // Fallback: assume input is normalized to [0, 1]
+                    // Scale = 1/255 for typical image input
+                    tensor.scale = 1.0 / 255.0;
+                }
+            }
 
             if self.verbose {
                 let fmt = if self.use_nhwc { "NHWC" } else { "NCHW" };
@@ -229,7 +509,20 @@ impl MarsCompiler {
         tensor.format = if self.use_nhwc { DataFormat::Nhwc } else { DataFormat::Nchw };
 
         // Try to get shape from ONNX shape_info (ONNX uses NCHW)
-        if let Some(dims) = self.onnx.shape_info.get(name) {
+        // For QDQ models, tensor names may have suffixes like _DequantizeLinear_Output
+        let shape_name = if self.onnx.shape_info.contains_key(name) {
+            name.to_string()
+        } else if name.ends_with("_DequantizeLinear_Output") {
+            name.trim_end_matches("_DequantizeLinear_Output").to_string()
+        } else if name.ends_with("_QuantizeLinear_Output") {
+            name.trim_end_matches("_QuantizeLinear_Output").to_string()
+        } else if name.ends_with("_QuantizeLinear_Input") {
+            name.trim_end_matches("_QuantizeLinear_Input").to_string()
+        } else {
+            name.to_string()
+        };
+
+        if let Some(dims) = self.onnx.shape_info.get(&shape_name) {
             tensor.ndims = dims.len() as u32;
             if self.use_nhwc && dims.len() == 4 {
                 // Convert NCHW -> NHWC shape
@@ -243,6 +536,13 @@ impl MarsCompiler {
                         tensor.shape[i] = dim.max(1) as i32;
                     }
                 }
+            }
+        }
+
+        // Set QDQ scale if available (for intermediate tensors in QDQ models)
+        if self.quantize {
+            if let Some(scale) = self.get_qdq_scale(name) {
+                tensor.scale = scale;
             }
         }
 
@@ -267,6 +567,22 @@ impl MarsCompiler {
         self.tensor_map.insert(name.to_string(), id);
         self.tensors.push(tensor);
         id
+    }
+
+    /// Update tensor scale (for quantized tensors)
+    fn set_tensor_scale(&mut self, tensor_id: u32, scale: f32) {
+        if let Some(tensor) = self.tensors.get_mut(tensor_id as usize) {
+            if self.verbose && (scale - 1.0).abs() < 0.001 {
+                eprintln!("  [WARN] Setting tensor {} ({}) scale to 1.0 (default)",
+                         tensor_id, tensor.name);
+            }
+            tensor.scale = scale;
+        }
+    }
+
+    /// Get tensor scale
+    fn get_tensor_scale(&self, tensor_id: u32) -> f32 {
+        self.tensors.get(tensor_id as usize).map(|t| t.scale).unwrap_or(1.0)
     }
 
     /// Update tensor shape (for output tensors computed from layer params)
@@ -302,19 +618,55 @@ impl MarsCompiler {
         (offset, data.len() as u64)
     }
 
-    fn quantize_weights(&self, float_data: &[u8]) -> (Vec<u8>, f32) {
+    fn quantize_weights(&self, data: &[u8], dtype: TensorDataType) -> (Vec<u8>, f32) {
         if !self.quantize {
-            return (float_data.to_vec(), 1.0);
+            return (data.to_vec(), 1.0);
         }
 
-        // Convert bytes to f32
-        let floats: Vec<f32> = float_data.chunks_exact(4)
-            .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
-            .collect();
+        // Convert to f32 based on source data type
+        let floats: Vec<f32> = match dtype {
+            TensorDataType::Float => {
+                // Float32: 4 bytes per element
+                data.chunks_exact(4)
+                    .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+                    .collect()
+            }
+            TensorDataType::Float16 => {
+                // Float16: 2 bytes per element, need to convert to f32
+                data.chunks_exact(2)
+                    .map(|b| {
+                        let bits = u16::from_le_bytes([b[0], b[1]]);
+                        half_to_f32(bits)
+                    })
+                    .collect()
+            }
+            TensorDataType::Int8 => {
+                // Already INT8 - just return as-is with scale 1.0
+                // This shouldn't normally happen but handle gracefully
+                return (data.to_vec(), 1.0 / 127.0);
+            }
+            _ => {
+                // Unknown type - try as float32
+                eprintln!("  Warning: Unknown dtype {:?}, trying as float32", dtype);
+                data.chunks_exact(4)
+                    .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+                    .collect()
+            }
+        };
+
+        // Debug: print first few float values
+        if self.verbose && !floats.is_empty() {
+            let sample: Vec<f32> = floats.iter().take(8).copied().collect();
+            eprintln!("    First 8 floats: {:?}", sample);
+        }
 
         // Find scale
         let max_abs = floats.iter().map(|f| f.abs()).fold(0.0f32, f32::max);
         let scale = if max_abs > 0.0 { max_abs / 127.0 } else { 1.0 };
+
+        if self.verbose {
+            eprintln!("    max_abs={} scale={}", max_abs, scale);
+        }
 
         // Quantize to int8
         let quantized: Vec<u8> = floats.iter()
@@ -338,10 +690,43 @@ impl MarsCompiler {
         let input_name = node.inputs.get(0).context("Conv missing input")?;
         let input_id = self.get_or_create_tensor(input_name);
 
-        // Get weight tensor from initializers
-        let weight_name = node.inputs.get(1).context("Conv missing weight")?;
-        let weight_tensor = self.onnx.initializers.get(weight_name)
-            .context("Conv weight not found in initializers")?;
+        // Get weight tensor - handle QDQ models where weight input is DequantizeLinear output
+        let weight_input_name = node.inputs.get(1).context("Conv missing weight")?;
+
+        // For QDQ models: weight input is "model.0.conv.weight_DequantizeLinear_Output"
+        // We need to find the quantized weight "model.0.conv.weight_quantized"
+        let (weight_name, weight_tensor, qdq_weight_scale) = if self.has_qdq {
+            // Try to find quantized weight by stripping "_DequantizeLinear_Output" suffix
+            let base_name = weight_input_name.trim_end_matches("_DequantizeLinear_Output");
+            let quant_name = format!("{}_quantized", base_name);
+
+            if let Some(quant_tensor) = self.onnx.initializers.get(&quant_name) {
+                // Found quantized weights - also get the scale
+                let scale = self.get_qdq_scale(base_name);
+                if self.verbose && layer_id < 3 {
+                    println!("  Found QDQ quantized weights: {} (scale={:?})", quant_name, scale);
+                }
+                (quant_name, quant_tensor.clone(), scale)
+            } else if let Some(tensor) = self.onnx.initializers.get(weight_input_name) {
+                // Fallback to direct lookup
+                (weight_input_name.clone(), tensor.clone(), None)
+            } else {
+                anyhow::bail!("Conv weight not found: {}", weight_input_name);
+            }
+        } else {
+            // Non-QDQ model: direct lookup
+            let tensor = self.onnx.initializers.get(weight_input_name)
+                .context("Conv weight not found in initializers")?;
+            (weight_input_name.clone(), tensor.clone(), None)
+        };
+
+        // Debug: print weight tensor info for first few convs
+        if self.verbose && layer_id < 3 {
+            eprintln!("  Conv[{}] weights: dtype={:?} dims={:?} bytes={}",
+                     layer_id, weight_tensor.data_type, weight_tensor.dims, weight_tensor.data.len());
+            let first_bytes: Vec<u8> = weight_tensor.data.iter().take(16).copied().collect();
+            eprintln!("    First 16 bytes: {:?}", first_bytes);
+        }
 
         // Get kernel shape from weights [O, I, H, W]
         let out_ch = weight_tensor.dims.get(0).copied().unwrap_or(1) as u32;
@@ -351,15 +736,28 @@ impl MarsCompiler {
 
         // Process weights - pack based on quantization and feature format
         let (weight_data, scale, weight_format) = if self.quantize {
-            let (quant_weights, scale) = self.quantize_weights(&weight_tensor.data);
-            if self.use_nhwc {
-                // INT8 + NHWC: Convert OIHW -> OHWI for NHWC convolution
-                let ohwi_weights = convert_oihw_to_ohwi(&quant_weights,
-                    out_ch as usize, in_ch as usize, kh as usize, kw as usize);
-                (ohwi_weights, scale, DataFormat::Ohwi)
+            // Check if weights are already INT8 (from QDQ model)
+            if weight_tensor.data_type == TensorDataType::Int8 {
+                // Already quantized - use directly with QDQ scale
+                let scale = qdq_weight_scale.unwrap_or(1.0 / 127.0);
+                let weights = weight_tensor.data.clone();
+                if self.use_nhwc {
+                    let ohwi_weights = convert_oihw_to_ohwi(&weights,
+                        out_ch as usize, in_ch as usize, kh as usize, kw as usize);
+                    (ohwi_weights, scale, DataFormat::Ohwi)
+                } else {
+                    (weights, scale, DataFormat::Oihw)
+                }
             } else {
-                // INT8 + NCHW: Keep OIHW format
-                (quant_weights, scale, DataFormat::Oihw)
+                // Float weights - quantize them
+                let (quant_weights, scale) = self.quantize_weights(&weight_tensor.data, weight_tensor.data_type);
+                if self.use_nhwc {
+                    let ohwi_weights = convert_oihw_to_ohwi(&quant_weights,
+                        out_ch as usize, in_ch as usize, kh as usize, kw as usize);
+                    (ohwi_weights, scale, DataFormat::Ohwi)
+                } else {
+                    (quant_weights, scale, DataFormat::Oihw)
+                }
             }
         } else {
             // Float32: Store as-is in OIHW format (standard ONNX layout)
@@ -369,7 +767,7 @@ impl MarsCompiler {
 
         // Create weight tensor
         let weight_id = self.tensors.len() as u32;
-        let mut w_tensor = MarsTensor::new(weight_id, weight_name);
+        let mut w_tensor = MarsTensor::new(weight_id, &weight_name);
         w_tensor.dtype = if self.quantize { DataType::Int8 } else { DataType::Float32 };
         w_tensor.format = weight_format;
         w_tensor.ndims = 4;
@@ -448,6 +846,33 @@ impl MarsCompiler {
             self.update_tensor_shape(output_id, &[input_shape[0], out_ch as i32, out_h, out_w]);
         }
 
+        // Propagate quantization scales for INT8
+        // The combined_scale in runtime = (in_scale * w_scale) / out_scale
+        if self.quantize {
+            // Try to get QDQ calibrated output scale first
+            if let Some(out_scale) = self.get_qdq_scale(output_name) {
+                // Use calibrated scale from QDQ model
+                self.set_tensor_scale(output_id, out_scale);
+                if self.verbose && layer_id < 5 {
+                    let in_scale = self.get_tensor_scale(input_id);
+                    let combined = (in_scale * scale) / out_scale;
+                    println!("  Conv[{}] QDQ scales: in={:.6} w={:.6} out={:.6} -> combined={:.6}",
+                             layer_id, in_scale, scale, out_scale, combined);
+                }
+            } else {
+                // Fallback: conservative heuristic to prevent overflow
+                // combined_scale = 1 / fan_in
+                let in_scale = self.get_tensor_scale(input_id);
+                let fan_in = (in_ch * kh * kw) as f32;
+                let out_scale = in_scale * scale * fan_in;
+                self.set_tensor_scale(output_id, out_scale);
+                if self.verbose && layer_id < 5 {
+                    println!("  Conv[{}] heuristic scales: in={:.6} w={:.6} out={:.6} (fan_in={})",
+                             layer_id, in_scale, scale, out_scale, fan_in);
+                }
+            }
+        }
+
         // Determine layer type (depthwise vs regular conv)
         let layer_type = if group > 1 && group == in_ch && group == out_ch {
             LayerType::DepthwiseConv2d
@@ -518,6 +943,12 @@ impl MarsCompiler {
         let out_w = (input_shape[3] + pad_l + pad_r - kw) / sw + 1;
         self.update_tensor_shape(output_id, &[input_shape[0], input_shape[1], out_h, out_w]);
 
+        // Pool preserves scale (max/avg don't change value range significantly)
+        if self.quantize {
+            let in_scale = self.get_tensor_scale(input_id);
+            self.set_tensor_scale(output_id, in_scale);
+        }
+
         let mut layer = MarsLayer::new(layer_id, layer_type);
         layer.num_inputs = 1;
         layer.num_outputs = 1;
@@ -552,6 +983,19 @@ impl MarsCompiler {
         // Activation layers keep the same shape
         let input_shape = self.get_tensor_shape(input_id);
         self.update_tensor_shape(output_id, &input_shape);
+
+        // Propagate scale for activations
+        // Sigmoid/Softmax: output is [0,1], so scale = 1/127 maps to full range
+        // ReLU: output range <= input range (same scale)
+        // SiLU: output range <= input range (same scale)
+        if self.quantize {
+            let in_scale = self.get_tensor_scale(input_id);
+            let out_scale = match layer_type {
+                LayerType::Sigmoid => 1.0 / 127.0,  // [0, 1] range
+                _ => in_scale,  // ReLU, SiLU, etc. preserve range
+            };
+            self.set_tensor_scale(output_id, out_scale);
+        }
 
         let mut layer = MarsLayer::new(layer_id, layer_type);
         layer.num_inputs = 1;
@@ -675,6 +1119,14 @@ impl MarsCompiler {
         bias_tensor.data_size = bias_size;
         self.tensors.push(bias_tensor);
 
+        // BatchNorm can change scale based on fused_scale values
+        // Use max fused_scale to estimate output range change
+        if self.quantize {
+            let in_scale = self.get_tensor_scale(input_id);
+            let max_fused = fused_scale.iter().map(|&x| x.abs()).fold(0.0f32, f32::max);
+            self.set_tensor_scale(output_id, in_scale * max_fused.max(0.1));
+        }
+
         let mut layer = MarsLayer::new(layer_id, LayerType::BatchNorm);
         layer.num_inputs = 3;  // input, scale, bias
         layer.num_outputs = 1;
@@ -703,6 +1155,24 @@ impl MarsCompiler {
         // Elementwise ops preserve shape (use first input's shape)
         let input_shape = self.get_tensor_shape(input_a_id);
         self.update_tensor_shape(output_id, &input_shape);
+
+        // Propagate scale for elementwise ops
+        if self.quantize {
+            let scale_a = self.get_tensor_scale(input_a_id);
+            let scale_b = self.get_tensor_scale(input_b_id);
+            let out_scale = match layer_type {
+                LayerType::Add => scale_a.max(scale_b),  // Use max for add
+                LayerType::Mul => {
+                    // For Mul: if one input has default scale (1.0), use the other
+                    // This handles constant multipliers (strides, grid offsets, etc.)
+                    if (scale_a - 1.0).abs() < 0.001 { scale_b }
+                    else if (scale_b - 1.0).abs() < 0.001 { scale_a }
+                    else { scale_a.min(scale_b) }  // Both non-default: use smaller
+                },
+                _ => scale_a,
+            };
+            self.set_tensor_scale(output_id, out_scale);
+        }
 
         let mut layer = MarsLayer::new(layer_id, layer_type);
         layer.num_inputs = 2;
@@ -765,6 +1235,22 @@ impl MarsCompiler {
         }
         self.update_tensor_shape(output_id, &out_shape);
 
+        // Propagate scale - use max of input scales (preserve dynamic range)
+        // But only if the output tensor doesn't already have a QDQ-calibrated scale
+        if self.quantize {
+            let existing_scale = self.get_tensor_scale(output_id);
+            // Only override if the existing scale is the default 1.0
+            if (existing_scale - 1.0).abs() < 0.0001 {
+                let mut max_scale = 0.0f32;
+                for i in 0..layer.num_inputs as usize {
+                    max_scale = max_scale.max(self.get_tensor_scale(layer.input_tensor_ids[i]));
+                }
+                if max_scale > 0.0001 {
+                    self.set_tensor_scale(output_id, max_scale);
+                }
+            }
+        }
+
         layer.params = LayerParams::Concat(ConcatParams {
             axis,
             num_inputs: layer.num_inputs,
@@ -815,6 +1301,12 @@ impl MarsCompiler {
         let mode = node.get_string("mode").unwrap_or("nearest");
         let mode_val = if mode == "bilinear" || mode == "linear" { 1 } else { 0 };
 
+        // Propagate scale - upsample doesn't change value range
+        if self.quantize {
+            let in_scale = self.get_tensor_scale(input_id);
+            self.set_tensor_scale(output_id, in_scale);
+        }
+
         let mut layer = MarsLayer::new(layer_id, LayerType::Upsample);
         layer.num_inputs = 1;
         layer.num_outputs = 1;
@@ -863,6 +1355,12 @@ impl MarsCompiler {
         }
         self.update_tensor_shape(output_id, &out_shape);
 
+        // Reshape preserves scale
+        if self.quantize {
+            let in_scale = self.get_tensor_scale(input_id);
+            self.set_tensor_scale(output_id, in_scale);
+        }
+
         let mut layer = MarsLayer::new(layer_id, LayerType::Reshape);
         layer.num_inputs = 1;
         layer.num_outputs = 1;
@@ -907,6 +1405,12 @@ impl MarsCompiler {
         }
         self.update_tensor_shape(output_id, &out_shape);
 
+        // Transpose preserves scale
+        if self.quantize {
+            let in_scale = self.get_tensor_scale(input_id);
+            self.set_tensor_scale(output_id, in_scale);
+        }
+
         let mut layer = MarsLayer::new(layer_id, LayerType::Transpose);
         layer.num_inputs = 1;
         layer.num_outputs = 1;
@@ -934,6 +1438,11 @@ impl MarsCompiler {
         // Softmax preserves shape
         let input_shape = self.get_tensor_shape(input_id);
         self.update_tensor_shape(output_id, &input_shape);
+
+        // Softmax output is [0, 1], so scale = 1/127
+        if self.quantize {
+            self.set_tensor_scale(output_id, 1.0 / 127.0);
+        }
 
         let axis = node.get_int("axis").unwrap_or(-1);
         let axis = if axis < 0 { (4 + axis) as u32 } else { axis as u32 };
@@ -975,6 +1484,22 @@ impl MarsCompiler {
         for (i, output) in self.onnx.outputs.iter().take(4).enumerate() {
             if let Some(&id) = self.tensor_map.get(&output.name) {
                 header.output_tensor_ids[i] = id;
+                if self.verbose {
+                    println!("Output {}: {} -> tensor_id {}", i, output.name, id);
+                }
+            } else {
+                // Try to find the tensor with a suffix (QDQ models add _QuantizeLinear_Input)
+                let alt_name = format!("{}_QuantizeLinear_Input", output.name);
+                if let Some(&id) = self.tensor_map.get(&alt_name) {
+                    header.output_tensor_ids[i] = id;
+                    if self.verbose {
+                        let scale = self.tensors.get(id as usize).map(|t| t.scale).unwrap_or(1.0);
+                        println!("Output {}: {} (via {}) -> tensor_id {} (scale={})",
+                                 i, output.name, alt_name, id, scale);
+                    }
+                } else {
+                    eprintln!("Warning: Output tensor {} not found in tensor_map", output.name);
+                }
             }
         }
 
