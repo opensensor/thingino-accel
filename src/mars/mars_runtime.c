@@ -16,8 +16,9 @@
 #include "mars_runtime.h"
 #include "nna.h"
 #include "device_internal.h"
+#include "mxu_ops.h"
 
-/* External MXU-accelerated convolution */
+/* External MXU-accelerated convolutions */
 extern void conv2d_int8_mxu(
     const int8_t *input, int in_h, int in_w, int in_c,
     const int8_t *weight, int out_c, int kh, int kw,
@@ -26,6 +27,15 @@ extern void conv2d_int8_mxu(
     int stride_h, int stride_w,
     int pad_top, int pad_left,
     float in_scale, float w_scale, float out_scale);
+
+extern void conv2d_float32_mxu(
+    const float *input, int in_h, int in_w, int in_c,
+    const float *weight, int out_c, int kh, int kw,
+    const float *bias,
+    float *output, int out_h, int out_w,
+    int stride_h, int stride_w,
+    int pad_top, int pad_left,
+    float *scratch);
 
 /* Set to 1 to use MXU acceleration, 0 for software fallback */
 #ifndef USE_MXU
@@ -271,6 +281,14 @@ mars_error_t mars_load_memory(const void *data, size_t size, mars_model_t **out_
     fprintf(stderr, "Mars: Allocated %u tensors using %zu working buffers\n",
             header.num_tensors, num_buffers);
 
+#if USE_MXU
+    /* Initialize MXU for compute operations */
+    if (!mxu_is_initialized()) {
+        mxu_init(model->ddr_base);
+        fprintf(stderr, "Mars: MXU initialized for SIMD acceleration\n");
+    }
+#endif
+
     *out_model = model;
     return MARS_OK;
 }
@@ -493,33 +511,65 @@ static mars_error_t execute_conv2d(mars_model_t *model, mars_runtime_layer_t *la
         pad_left = pad_w / 2;
     }
 
-    printf("  Conv2D: %dx%dx%d -> %dx%dx%d (k=%dx%d, s=%d) [%s]\n",
+    /* Check if float32 model */
+    int is_float = (input->desc.dtype == MARS_DTYPE_FLOAT32);
+
+    printf("  Conv2D: %dx%dx%d -> %dx%dx%d (k=%dx%d, s=%d) [%s%s]\n",
            in_h, in_w, in_c, out_h, out_w, out_c,
            params->kernel_h, params->kernel_w, params->stride_h,
+           is_float ? "F32-" : "INT8-",
            USE_MXU ? "MXU" : "SW");
 
 #if USE_MXU
-    /* Use MXU-accelerated convolution */
-    conv2d_int8_mxu(
-        (int8_t *)input->vaddr, in_h, in_w, in_c,
-        (int8_t *)weight->vaddr, out_c, params->kernel_h, params->kernel_w,
-        bias ? (int32_t *)bias->vaddr : NULL,
-        (int8_t *)output->vaddr, out_h, out_w,
-        params->stride_h, params->stride_w,
-        pad_top, pad_left,
-        input->desc.scale, weight->desc.scale, output->desc.scale
-    );
+    if (is_float) {
+        /* Float32 MXU-accelerated convolution */
+        /* Use end of DDR buffer as scratch space for VPR stores */
+        float *scratch = (float *)((char *)model->ddr_base + model->ddr_size - 256);
+        conv2d_float32_mxu(
+            (float *)input->vaddr, in_h, in_w, in_c,
+            (float *)weight->vaddr, out_c, params->kernel_h, params->kernel_w,
+            bias ? (float *)bias->vaddr : NULL,
+            (float *)output->vaddr, out_h, out_w,
+            params->stride_h, params->stride_w,
+            pad_top, pad_left,
+            scratch
+        );
+    } else {
+        /* INT8 MXU-accelerated convolution */
+        conv2d_int8_mxu(
+            (int8_t *)input->vaddr, in_h, in_w, in_c,
+            (int8_t *)weight->vaddr, out_c, params->kernel_h, params->kernel_w,
+            bias ? (int32_t *)bias->vaddr : NULL,
+            (int8_t *)output->vaddr, out_h, out_w,
+            params->stride_h, params->stride_w,
+            pad_top, pad_left,
+            input->desc.scale, weight->desc.scale, output->desc.scale
+        );
+    }
 #else
-    /* Run software convolution */
-    conv2d_int8_sw(
-        (int8_t *)input->vaddr, in_h, in_w, in_c,
-        (int8_t *)weight->vaddr, out_c, params->kernel_h, params->kernel_w,
-        bias ? (int32_t *)bias->vaddr : NULL,
-        (int8_t *)output->vaddr, out_h, out_w,
-        params->stride_h, params->stride_w,
-        pad_top, pad_left,
-        input->desc.scale, weight->desc.scale, output->desc.scale
-    );
+    if (is_float) {
+        /* Float32 software convolution */
+        conv2d_float32_mxu(
+            (float *)input->vaddr, in_h, in_w, in_c,
+            (float *)weight->vaddr, out_c, params->kernel_h, params->kernel_w,
+            bias ? (float *)bias->vaddr : NULL,
+            (float *)output->vaddr, out_h, out_w,
+            params->stride_h, params->stride_w,
+            pad_top, pad_left,
+            NULL
+        );
+    } else {
+        /* INT8 software convolution */
+        conv2d_int8_sw(
+            (int8_t *)input->vaddr, in_h, in_w, in_c,
+            (int8_t *)weight->vaddr, out_c, params->kernel_h, params->kernel_w,
+            bias ? (int32_t *)bias->vaddr : NULL,
+            (int8_t *)output->vaddr, out_h, out_w,
+            params->stride_h, params->stride_w,
+            pad_top, pad_left,
+            input->desc.scale, weight->desc.scale, output->desc.scale
+        );
+    }
 #endif
 
     /* Apply activation if specified */
@@ -561,6 +611,20 @@ static mars_error_t execute_sigmoid(mars_model_t *model, mars_runtime_layer_t *l
         numel *= input->desc.shape[i];
     }
 
+    /* Check if float32 model */
+    int is_float = (input->desc.dtype == MARS_DTYPE_FLOAT32);
+
+    if (is_float) {
+        /* Direct float32 path - no quantization overhead */
+        float *in = (float *)input->vaddr;
+        float *out = (float *)output->vaddr;
+        for (size_t i = 0; i < numel; i++) {
+            out[i] = 1.0f / (1.0f + expf(-in[i]));
+        }
+        return MARS_OK;
+    }
+
+    /* INT8 path with quantization */
     int8_t *in = (int8_t *)input->vaddr;
     int8_t *out = (int8_t *)output->vaddr;
     float in_scale = input->desc.scale;
@@ -601,18 +665,45 @@ static mars_error_t execute_mul(mars_model_t *model, mars_runtime_layer_t *layer
         numel *= input_a->desc.shape[i];
     }
 
+    /* Check if float32 model */
+    int is_float = (input_a->desc.dtype == MARS_DTYPE_FLOAT32);
+
+#if USE_MXU && defined(__mips__)
+    if (is_float && mxu_is_initialized()) {
+        /* Direct float32 MXU path - no quantization overhead */
+        float *a = (float *)input_a->vaddr;
+        float *b = (float *)input_b->vaddr;
+        float *out = (float *)output->vaddr;
+        mxu_mul_f32(out, a, b, numel);
+        return MARS_OK;
+    }
+#endif
+
+    if (is_float) {
+        /* Float32 scalar fallback */
+        float *a = (float *)input_a->vaddr;
+        float *b = (float *)input_b->vaddr;
+        float *out = (float *)output->vaddr;
+        for (size_t i = 0; i < numel; i++) {
+            out[i] = a[i] * b[i];
+        }
+        return MARS_OK;
+    }
+
+    /* INT8 path with quantization */
     int8_t *a = (int8_t *)input_a->vaddr;
     int8_t *b = (int8_t *)input_b->vaddr;
     int8_t *out = (int8_t *)output->vaddr;
     float scale_a = input_a->desc.scale;
     float scale_b = input_b->desc.scale;
     float scale_out = output->desc.scale > 0 ? output->desc.scale : 1.0f;
+    float inv_scale_out = 1.0f / scale_out;
 
     for (size_t i = 0; i < numel; i++) {
         float va = a[i] * scale_a;
         float vb = b[i] * scale_b;
         float y = va * vb;
-        int32_t q = (int32_t)(y / scale_out + 0.5f);
+        int32_t q = (int32_t)(y * inv_scale_out + 0.5f);
         if (q > 127) q = 127;
         if (q < -128) q = -128;
         out[i] = (int8_t)q;
@@ -641,18 +732,45 @@ static mars_error_t execute_add(mars_model_t *model, mars_runtime_layer_t *layer
         numel *= input_a->desc.shape[i];
     }
 
+    /* Check if float32 model */
+    int is_float = (input_a->desc.dtype == MARS_DTYPE_FLOAT32);
+
+#if USE_MXU && defined(__mips__)
+    if (is_float && mxu_is_initialized()) {
+        /* Direct float32 MXU path - no quantization overhead */
+        float *a = (float *)input_a->vaddr;
+        float *b = (float *)input_b->vaddr;
+        float *out = (float *)output->vaddr;
+        mxu_add_f32(out, a, b, numel);
+        return MARS_OK;
+    }
+#endif
+
+    if (is_float) {
+        /* Float32 scalar fallback */
+        float *a = (float *)input_a->vaddr;
+        float *b = (float *)input_b->vaddr;
+        float *out = (float *)output->vaddr;
+        for (size_t i = 0; i < numel; i++) {
+            out[i] = a[i] + b[i];
+        }
+        return MARS_OK;
+    }
+
+    /* INT8 path with quantization */
     int8_t *a = (int8_t *)input_a->vaddr;
     int8_t *b = (int8_t *)input_b->vaddr;
     int8_t *out = (int8_t *)output->vaddr;
     float scale_a = input_a->desc.scale;
     float scale_b = input_b->desc.scale;
     float scale_out = output->desc.scale > 0 ? output->desc.scale : 1.0f;
+    float inv_scale_out = 1.0f / scale_out;
 
     for (size_t i = 0; i < numel; i++) {
         float va = a[i] * scale_a;
         float vb = b[i] * scale_b;
         float y = va + vb;
-        int32_t q = (int32_t)(y / scale_out + 0.5f);
+        int32_t q = (int32_t)(y * inv_scale_out + 0.5f);
         if (q > 127) q = 127;
         if (q < -128) q = -128;
         out[i] = (int8_t)q;
@@ -800,7 +918,7 @@ static mars_error_t execute_upsample(mars_model_t *model, mars_runtime_layer_t *
     return MARS_OK;
 }
 
-/* Execute ReLU: out = max(0, x) */
+/* Execute ReLU/LeakyReLU: out = max(0, x) or out = x if x > 0, else alpha * x */
 static mars_error_t execute_relu(mars_model_t *model, mars_runtime_layer_t *layer) {
     const mars_layer_t *desc = &layer->desc;
 
@@ -816,11 +934,99 @@ static mars_error_t execute_relu(mars_model_t *model, mars_runtime_layer_t *laye
         numel *= input->desc.shape[i];
     }
 
-    int8_t *in = (int8_t *)input->vaddr;
-    int8_t *out = (int8_t *)output->vaddr;
+    /* LeakyReLU uses alpha=0.01 by default */
+    int is_leaky = (desc->type == MARS_LAYER_LEAKY_RELU);
+    float alpha = is_leaky ? 0.01f : 0.0f;
 
-    for (size_t i = 0; i < numel; i++) {
-        out[i] = in[i] > 0 ? in[i] : 0;
+    if (input->desc.dtype == MARS_DTYPE_FLOAT32) {
+        const float *in = (const float *)input->vaddr;
+        float *out = (float *)output->vaddr;
+        for (size_t i = 0; i < numel; i++) {
+            out[i] = in[i] > 0.0f ? in[i] : in[i] * alpha;
+        }
+    } else {
+        const int8_t *in = (const int8_t *)input->vaddr;
+        int8_t *out = (int8_t *)output->vaddr;
+        for (size_t i = 0; i < numel; i++) {
+            if (in[i] > 0) {
+                out[i] = in[i];
+            } else if (is_leaky) {
+                /* Apply alpha with rounding */
+                int32_t v = (int32_t)(in[i] * alpha);
+                out[i] = (int8_t)(v < -128 ? -128 : v);
+            } else {
+                out[i] = 0;
+            }
+        }
+    }
+
+    return MARS_OK;
+}
+
+/* Execute BatchNorm: y = x * scale + bias (fused BN parameters) */
+static mars_error_t execute_batchnorm(mars_model_t *model, mars_runtime_layer_t *layer) {
+    const mars_layer_t *desc = &layer->desc;
+
+    mars_runtime_tensor_t *input = get_tensor_by_id(model, desc->input_tensor_ids[0]);
+    mars_runtime_tensor_t *scale = get_tensor_by_id(model, desc->input_tensor_ids[1]);
+    mars_runtime_tensor_t *bias = get_tensor_by_id(model, desc->input_tensor_ids[2]);
+    mars_runtime_tensor_t *output = get_tensor_by_id(model, desc->output_tensor_ids[0]);
+
+    if (!input || !output || !input->vaddr || !output->vaddr) {
+        return MARS_ERR_INVALID_TENSOR;
+    }
+
+    /* Get dimensions - assuming NCHW format */
+    int n = input->desc.shape[0] > 0 ? input->desc.shape[0] : 1;
+    int c = input->desc.shape[1] > 0 ? input->desc.shape[1] : 1;
+    int h = input->desc.shape[2] > 0 ? input->desc.shape[2] : 1;
+    int w = input->desc.shape[3] > 0 ? input->desc.shape[3] : 1;
+
+    /* Get fused scale and bias from weight tensors */
+    const float *s = scale && scale->vaddr ? (const float *)scale->vaddr : NULL;
+    const float *b = bias && bias->vaddr ? (const float *)bias->vaddr : NULL;
+
+    /* Float32 path */
+    if (input->desc.dtype == MARS_DTYPE_FLOAT32) {
+        const float *in = (const float *)input->vaddr;
+        float *out = (float *)output->vaddr;
+
+        for (int ni = 0; ni < n; ni++) {
+            for (int ci = 0; ci < c; ci++) {
+                float sc = s ? s[ci] : 1.0f;
+                float bi = b ? b[ci] : 0.0f;
+                for (int hi = 0; hi < h; hi++) {
+                    for (int wi = 0; wi < w; wi++) {
+                        int idx = ((ni * c + ci) * h + hi) * w + wi;
+                        out[idx] = in[idx] * sc + bi;
+                    }
+                }
+            }
+        }
+    } else {
+        /* INT8 path with quantization */
+        const int8_t *in = (const int8_t *)input->vaddr;
+        int8_t *out = (int8_t *)output->vaddr;
+        float in_scale = input->desc.scale > 0 ? input->desc.scale : 1.0f;
+        float out_scale = output->desc.scale > 0 ? output->desc.scale : 1.0f;
+
+        for (int ni = 0; ni < n; ni++) {
+            for (int ci = 0; ci < c; ci++) {
+                float sc = s ? s[ci] : 1.0f;
+                float bi = b ? b[ci] : 0.0f;
+                for (int hi = 0; hi < h; hi++) {
+                    for (int wi = 0; wi < w; wi++) {
+                        int idx = ((ni * c + ci) * h + hi) * w + wi;
+                        float x = in[idx] * in_scale;
+                        float y = x * sc + bi;
+                        int32_t q = (int32_t)(y / out_scale + 0.5f);
+                        if (q > 127) q = 127;
+                        if (q < -128) q = -128;
+                        out[idx] = (int8_t)q;
+                    }
+                }
+            }
+        }
     }
 
     return MARS_OK;
@@ -873,9 +1079,16 @@ static mars_error_t execute_layer(mars_model_t *model, mars_runtime_layer_t *lay
             /* Reshape is a no-op for data, just reinterpret shape */
             return MARS_OK;
 
+        case MARS_LAYER_TRANSPOSE:
+            /* TODO: implement transpose */
+            return MARS_OK;
+
         case MARS_LAYER_SOFTMAX:
             /* TODO: implement softmax */
             return MARS_OK;
+
+        case MARS_LAYER_BATCHNORM:
+            return execute_batchnorm(model, layer);
 
         default:
             fprintf(stderr, "Mars: Unknown layer type %d\n", desc->type);

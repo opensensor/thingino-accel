@@ -1,0 +1,1 @@
+cmd_/home/matteius/thingino-accel/nna-aip-trace/nna-aip-trace.ko := mipsel-linux-ld -r -m elf32ltsmip -T ./scripts/module-common.lds --build-id  -o /home/matteius/thingino-accel/nna-aip-trace/nna-aip-trace.ko /home/matteius/thingino-accel/nna-aip-trace/nna-aip-trace.o /home/matteius/thingino-accel/nna-aip-trace/nna-aip-trace.mod.o

@@ -1,0 +1,23 @@
+# Makefile for nna_init kernel module
+
+# Cross-compile settings
+CROSS_COMPILE ?= mipsel-linux-
+ARCH ?= mips
+
+# Kernel source directory
+KDIR ?= $(HOME)/thingino-firmware-opensensor/thingino-linux-opensensor
+
+# Module name
+obj-m := nna_init.o
+
+# Build directory
+PWD := $(shell pwd)
+
+all:
+	$(MAKE) ARCH=$(ARCH) CROSS_COMPILE=$(CROSS_COMPILE) -C $(KDIR) M=$(PWD) modules
+
+clean:
+	$(MAKE) ARCH=$(ARCH) CROSS_COMPILE=$(CROSS_COMPILE) -C $(KDIR) M=$(PWD) clean
+
+.PHONY: all clean
+

@@ -24,15 +24,15 @@ struct Args {
     /// Input ONNX model file
     #[arg(short, long)]
     input: PathBuf,
-    
+
     /// Output .mars file
     #[arg(short, long)]
     output: PathBuf,
-    
-    /// Quantize weights to int8
-    #[arg(short, long, default_value = "true")]
-    quantize: bool,
-    
+
+    /// Keep weights as float32 (don't quantize to int8)
+    #[arg(short, long)]
+    float32: bool,
+
     /// Verbose output
     #[arg(short, long)]
     verbose: bool,
@@ -45,6 +45,7 @@ fn map_onnx_op_to_mars(op_type: &str) -> Option<LayerType> {
         "MaxPool" => Some(LayerType::MaxPool),
         "AveragePool" | "GlobalAveragePool" => Some(LayerType::AvgPool),
         "Relu" => Some(LayerType::Relu),
+        "LeakyRelu" => Some(LayerType::LeakyRelu),
         "Sigmoid" => Some(LayerType::Sigmoid),
         "Mul" => Some(LayerType::Mul),
         "Add" => Some(LayerType::Add),
@@ -53,8 +54,10 @@ fn map_onnx_op_to_mars(op_type: &str) -> Option<LayerType> {
         "Reshape" => Some(LayerType::Reshape),
         "Transpose" => Some(LayerType::Transpose),
         "Softmax" => Some(LayerType::Softmax),
+        // BatchNorm should be folded into Conv, but keep as separate layer for now
+        "BatchNormalization" => Some(LayerType::BatchNorm),
         // Skip these ops - they get folded or are handled differently
-        "Constant" | "Shape" | "Gather" | "Slice" | "Split" | "Sub" | "Div" => None,
+        "Constant" | "Shape" | "Gather" | "Slice" | "Split" | "Sub" | "Div" | "Unsqueeze" => None,
         _ => {
             eprintln!("Warning: Unknown op type: {}", op_type);
             None
@@ -173,10 +176,11 @@ impl MarsCompiler {
         match layer_type {
             LayerType::Conv2d => self.process_conv(node)?,
             LayerType::MaxPool | LayerType::AvgPool => self.process_pool(node, layer_type)?,
-            LayerType::Relu | LayerType::Sigmoid => self.process_activation(node, layer_type)?,
+            LayerType::Relu | LayerType::Sigmoid | LayerType::LeakyRelu => self.process_activation(node, layer_type)?,
             LayerType::Add | LayerType::Mul => self.process_elementwise(node, layer_type)?,
             LayerType::Concat => self.process_concat(node)?,
             LayerType::Upsample => self.process_upsample(node)?,
+            LayerType::BatchNorm => self.process_batchnorm(node)?,
             _ => {
                 if self.verbose {
                     println!("Skipping layer type: {:?}", layer_type);
@@ -287,6 +291,13 @@ impl MarsCompiler {
         (quantized, scale)
     }
 
+    /// Convert raw bytes to f32 vector
+    fn bytes_to_f32(data: &[u8]) -> Vec<f32> {
+        data.chunks_exact(4)
+            .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+            .collect()
+    }
+
     fn process_conv(&mut self, node: &OnnxNode) -> Result<()> {
         let layer_id = self.layers.len() as u32;
 
@@ -305,25 +316,30 @@ impl MarsCompiler {
         let kh = weight_tensor.dims.get(2).copied().unwrap_or(3) as u32;
         let kw = weight_tensor.dims.get(3).copied().unwrap_or(3) as u32;
 
-        // Quantize and pack weights in NMHWSOIB2 format (NNA native)
-        let (quant_weights, scale) = self.quantize_weights(&weight_tensor.data);
+        // Process weights - pack differently based on quantization
+        let (weight_data, scale, weight_format) = if self.quantize {
+            // INT8: Quantize and pack in NMHWSOIB2 format (NNA native)
+            let (quant_weights, scale) = self.quantize_weights(&weight_tensor.data);
+            let int8_weights: Vec<i8> = quant_weights.iter().map(|&b| b as i8).collect();
+            let packed_weights = pack_weights_nmhwsoib2(
+                &int8_weights,
+                out_ch as usize,
+                in_ch as usize,
+                kh as usize,
+                kw as usize,
+            );
+            (packed_weights, scale, DataFormat::Nmhwsoib2)
+        } else {
+            // Float32: Store as-is in OIHW format (standard ONNX layout)
+            (weight_tensor.data.clone(), 1.0, DataFormat::Oihw)
+        };
+        let (weight_offset, weight_size) = self.add_weights(&weight_data);
 
-        // Convert quantized weights from OIHW to NMHWSOIB2 packed format
-        let int8_weights: Vec<i8> = quant_weights.iter().map(|&b| b as i8).collect();
-        let packed_weights = pack_weights_nmhwsoib2(
-            &int8_weights,
-            out_ch as usize,
-            in_ch as usize,
-            kh as usize,
-            kw as usize,
-        );
-        let (weight_offset, weight_size) = self.add_weights(&packed_weights);
-
-        // Create weight tensor with NMHWSOIB2 format
+        // Create weight tensor
         let weight_id = self.tensors.len() as u32;
         let mut w_tensor = MarsTensor::new(weight_id, weight_name);
         w_tensor.dtype = if self.quantize { DataType::Int8 } else { DataType::Float32 };
-        w_tensor.format = DataFormat::Nmhwsoib2;  // NNA native packed format
+        w_tensor.format = weight_format;
         w_tensor.ndims = 4;
         w_tensor.shape[0] = out_ch as i32;
         w_tensor.shape[1] = in_ch as i32;
@@ -338,12 +354,14 @@ impl MarsCompiler {
         // Handle bias if present
         let bias_id = if let Some(bias_name) = node.inputs.get(2) {
             if let Some(bias_tensor) = self.onnx.initializers.get(bias_name) {
-                let (quant_bias, _) = self.quantize_weights(&bias_tensor.data);
-                let (bias_offset, bias_size) = self.add_weights(&quant_bias);
+                // Clone bias data to avoid borrow conflict
+                let bias_data = bias_tensor.data.clone();
+                // Bias stored as float32 in both modes
+                let (bias_offset, bias_size) = self.add_weights(&bias_data);
 
                 let bid = self.tensors.len() as u32;
                 let mut b_tensor = MarsTensor::new(bid, bias_name);
-                b_tensor.dtype = if self.quantize { DataType::Int8 } else { DataType::Float32 };
+                b_tensor.dtype = DataType::Float32;  // Bias always float32
                 b_tensor.ndims = 1;
                 b_tensor.shape[0] = out_ch as i32;
                 b_tensor.data_offset = bias_offset;
@@ -496,6 +514,130 @@ impl MarsCompiler {
         layer.num_inputs = 1;
         layer.num_outputs = 1;
         layer.input_tensor_ids[0] = input_id;
+        layer.output_tensor_ids[0] = output_id;
+
+        self.layers.push(layer);
+        Ok(())
+    }
+
+    /// Process BatchNormalization: y = (x - mean) / sqrt(var + eps) * gamma + beta
+    fn process_batchnorm(&mut self, node: &OnnxNode) -> Result<()> {
+        let layer_id = self.layers.len() as u32;
+
+        let input_name = node.inputs.get(0).context("BatchNorm missing input")?;
+        let input_id = self.get_or_create_tensor(input_name);
+
+        let output_name = node.outputs.get(0).context("BatchNorm missing output")?;
+        let output_id = self.get_or_create_tensor(output_name);
+
+        // BatchNorm keeps the same shape
+        let input_shape = self.get_tensor_shape(input_id);
+        self.update_tensor_shape(output_id, &input_shape);
+
+        // Get number of channels from input shape (NCHW format: shape[1])
+        let num_channels = if input_shape.len() >= 2 { input_shape[1] as usize } else { 1 };
+
+        // Get BatchNorm parameters: scale (gamma), B (beta), mean, var
+        let scale_name = node.inputs.get(1);
+        let bias_name = node.inputs.get(2);
+        let mean_name = node.inputs.get(3);
+        let var_name = node.inputs.get(4);
+
+        // Get epsilon attribute
+        let epsilon = node.get_float("epsilon").unwrap_or(1e-5);
+
+        // Fuse BN params into scale and bias: y = x * (gamma / sqrt(var + eps)) + (beta - mean * gamma / sqrt(var + eps))
+        let mut fused_scale = vec![1.0f32; num_channels];
+        let mut fused_bias = vec![0.0f32; num_channels];
+
+        // Get gamma (scale)
+        let gamma: Vec<f32> = if let Some(name) = scale_name {
+            if let Some(tensor) = self.onnx.initializers.get(name) {
+                Self::bytes_to_f32(&tensor.data)
+            } else {
+                vec![1.0f32; num_channels]
+            }
+        } else {
+            vec![1.0f32; num_channels]
+        };
+
+        // Get beta (bias)
+        let beta: Vec<f32> = if let Some(name) = bias_name {
+            if let Some(tensor) = self.onnx.initializers.get(name) {
+                Self::bytes_to_f32(&tensor.data)
+            } else {
+                vec![0.0f32; num_channels]
+            }
+        } else {
+            vec![0.0f32; num_channels]
+        };
+
+        // Get mean
+        let mean: Vec<f32> = if let Some(name) = mean_name {
+            if let Some(tensor) = self.onnx.initializers.get(name) {
+                Self::bytes_to_f32(&tensor.data)
+            } else {
+                vec![0.0f32; num_channels]
+            }
+        } else {
+            vec![0.0f32; num_channels]
+        };
+
+        // Get var
+        let var: Vec<f32> = if let Some(name) = var_name {
+            if let Some(tensor) = self.onnx.initializers.get(name) {
+                Self::bytes_to_f32(&tensor.data)
+            } else {
+                vec![1.0f32; num_channels]
+            }
+        } else {
+            vec![1.0f32; num_channels]
+        };
+
+        // Compute fused scale and bias
+        for i in 0..num_channels.min(gamma.len()).min(var.len()) {
+            let inv_std = 1.0 / (var[i] + epsilon).sqrt();
+            fused_scale[i] = gamma[i] * inv_std;
+            fused_bias[i] = beta.get(i).copied().unwrap_or(0.0)
+                          - mean.get(i).copied().unwrap_or(0.0) * fused_scale[i];
+        }
+
+        // Store fused scale as weight tensor
+        let scale_bytes: Vec<u8> = fused_scale.iter()
+            .flat_map(|&f| f.to_le_bytes())
+            .collect();
+        let (scale_offset, scale_size) = self.add_weights(&scale_bytes);
+
+        let scale_tensor_id = self.tensors.len() as u32;
+        let mut scale_tensor = MarsTensor::new(scale_tensor_id, &format!("{}_scale", node.name));
+        scale_tensor.dtype = DataType::Float32;
+        scale_tensor.ndims = 1;
+        scale_tensor.shape[0] = num_channels as i32;
+        scale_tensor.data_offset = scale_offset;
+        scale_tensor.data_size = scale_size;
+        self.tensors.push(scale_tensor);
+
+        // Store fused bias as weight tensor
+        let bias_bytes: Vec<u8> = fused_bias.iter()
+            .flat_map(|&f| f.to_le_bytes())
+            .collect();
+        let (bias_offset, bias_size) = self.add_weights(&bias_bytes);
+
+        let bias_tensor_id = self.tensors.len() as u32;
+        let mut bias_tensor = MarsTensor::new(bias_tensor_id, &format!("{}_bias", node.name));
+        bias_tensor.dtype = DataType::Float32;
+        bias_tensor.ndims = 1;
+        bias_tensor.shape[0] = num_channels as i32;
+        bias_tensor.data_offset = bias_offset;
+        bias_tensor.data_size = bias_size;
+        self.tensors.push(bias_tensor);
+
+        let mut layer = MarsLayer::new(layer_id, LayerType::BatchNorm);
+        layer.num_inputs = 3;  // input, scale, bias
+        layer.num_outputs = 1;
+        layer.input_tensor_ids[0] = input_id;
+        layer.input_tensor_ids[1] = scale_tensor_id;
+        layer.input_tensor_ids[2] = bias_tensor_id;
         layer.output_tensor_ids[0] = output_id;
 
         self.layers.push(layer);
@@ -681,7 +823,10 @@ fn main() -> Result<()> {
         .context("Failed to load ONNX model")?;
 
     // Compile to Mars
-    let mut compiler = MarsCompiler::new(onnx, args.quantize, args.verbose);
+    // If --float32 is specified, don't quantize (keep float32 weights)
+    let quantize = !args.float32;
+    println!("Quantization: {}", if quantize { "INT8" } else { "FLOAT32 (no quantization)" });
+    let mut compiler = MarsCompiler::new(onnx, quantize, args.verbose);
     compiler.compile()?;
 
     // Write output

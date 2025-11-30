@@ -112,15 +112,29 @@ $(BIN_DIR)/yolo_detect: $(EXAMPLES_DIR)/yolo_detect.cpp $(LIB_NNA_STATIC) | $(BI
 # Build Mars test (filter out mars_test from MARS_OBJS for library)
 MARS_LIB_OBJS := $(filter-out $(OBJ_DIR)/mars_mars_test.o,$(MARS_OBJS))
 
-# MXU-accelerated convolution object
+# MXU-accelerated objects
 $(OBJ_DIR)/mars_mxu_conv.o: $(SRC_DIR)/mars/mxu_conv.c | $(OBJ_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BIN_DIR)/mars_test: $(SRC_DIR)/mars/mars_test.c $(OBJ_DIR)/mars_mars_runtime.o $(OBJ_DIR)/mars_mxu_conv.o $(LIB_NNA_STATIC) | $(BIN_DIR)
-	$(CC) $(CFLAGS) $< $(OBJ_DIR)/mars_mars_runtime.o $(OBJ_DIR)/mars_mxu_conv.o -o $@ $(LDFLAGS) -lnna $(LIBS) -lm
+$(OBJ_DIR)/mars_mxu_ops.o: $(SRC_DIR)/mars/mxu_ops.c | $(OBJ_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+MARS_MXU_OBJS := $(OBJ_DIR)/mars_mxu_conv.o $(OBJ_DIR)/mars_mxu_ops.o
+
+$(BIN_DIR)/mars_test: $(SRC_DIR)/mars/mars_test.c $(OBJ_DIR)/mars_mars_runtime.o $(MARS_MXU_OBJS) $(LIB_NNA_STATIC) | $(BIN_DIR)
+	$(CC) $(CFLAGS) $< $(OBJ_DIR)/mars_mars_runtime.o $(MARS_MXU_OBJS) -o $@ $(LDFLAGS) -lnna $(LIBS) -lm
 	@echo "Built Mars test: $@"
 
-examples: $(EXAMPLE_BINS) $(CXX_EXAMPLE_BINS) $(BIN_DIR)/mars_test
+# NNA DMA object
+$(OBJ_DIR)/nna_dma.o: $(SRC_DIR)/nna_dma.c | $(OBJ_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# NNA DMA test
+$(BIN_DIR)/nna_dma_test: tools/nna_dma_test.c $(OBJ_DIR)/nna_dma.o | $(BIN_DIR)
+	$(CC) $(CFLAGS) $< $(OBJ_DIR)/nna_dma.o -o $@ $(LIBS)
+	@echo "Built NNA DMA test: $@"
+
+examples: $(EXAMPLE_BINS) $(CXX_EXAMPLE_BINS) $(BIN_DIR)/mars_test $(BIN_DIR)/nna_dma_test
 
 # Install (for cross-compilation, just copy to build dir)
 install: all

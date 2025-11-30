@@ -20,6 +20,11 @@
 #include <cstdarg>
 #include <limits>
 
+/* AIP wrapper (C linkage) for driving /dev/jzaip_* from Venus. */
+extern "C" {
+#include "../../include/aip.h"
+}
+
 // Forward declarations for OEM helper functions that are overridden later in
 // this translation unit. We need these early so that helper utilities can
 // safely call them.
@@ -32,7 +37,10 @@ extern "C" int _Z19get_string_vector_tRSt6vectorINSt7__cxx1112basic_stringIcSt11
     const void *param,
     int &index);
 
-/* Runtime DDR base exported from runtime.c so we can annotate parameter pointers. */
+/* Runtime ORAM/DDR bases exported from runtime.c so we can annotate pointers
+ * and compute physical addresses for AIP jobs. */
+extern "C" void *oram_base;
+extern "C" void *__oram_vbase;
 extern "C" void *__ddr_vbase;
 
 namespace magik {
@@ -860,11 +868,113 @@ static void dump_memory(const char* label, void* ptr, size_t size) {
     fflush(stdout);
 }
 
+/*
+ * Minimal AIP-F convolution smoke test wired into the Venus runtime.
+ *
+ * This mirrors TEST 2 from tools/aip_lib_test.c:
+ *   - Use ORAM at oram_base + 0x10000 as a scratch buffer.
+ *   - Arrange a trivial 8x8, 1-channel input with all ones.
+ *   - Use a 1x1 kernel with value 2 and zero bias.
+ *   - Run a single-node AIP-F convolution via aip_conv2d.
+ *
+ * The goal is not correctness of any .mgk model, but to verify that when
+ * MagikModelBase::run() executes under Venus we see the same /dev/jzaip_*
+ * behavior and dmesg traces as /opt/aip_lib_test.
+ */
+static void venus_aip_smoke_conv() {
+    printf("[VENUS][AIP] venus_aip_smoke_conv: starting ORAM-backed AIP-F test\n");
+    fflush(stdout);
+
+    if (!oram_base || !__oram_vbase) {
+        printf("[VENUS][AIP] oram_base/__oram_vbase not initialized; skipping AIP test.\n");
+        fflush(stdout);
+        return;
+    }
+
+    aip_ctx_t ctx;
+    if (aip_init(&ctx) != 0) {
+        printf("[VENUS][AIP] aip_init() failed; see preceding logs for details.\n");
+        fflush(stdout);
+        return;
+    }
+
+    volatile unsigned char *oram = static_cast<volatile unsigned char *>(__oram_vbase);
+    uint32_t oram_pbase = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(oram_base));
+
+    /* Use a scratch window at ORAM offset 0x10000, mirroring aip_lib_test. */
+    const uint32_t base_off = 0x10000u;
+    volatile unsigned char *data_buf = oram + base_off;
+    uint32_t data_paddr = oram_pbase + base_off;
+
+    const uint32_t in_off   = 0x0000u;
+    const uint32_t out_off  = 0x1000u;
+    const uint32_t kern_off = 0x2000u;
+    const uint32_t bias_off = 0x3000u;
+
+    /* Initialize patterns exactly like tools/aip_lib_test.c. */
+    for (int i = 0; i < 64; ++i)
+        data_buf[in_off + static_cast<uint32_t>(i)] = 1;   /* Input 8x8 */
+    for (int i = 0; i < 4; ++i)
+        data_buf[kern_off + static_cast<uint32_t>(i)] = 2; /* 1x1 kernel */
+    for (int i = 0; i < 4; ++i)
+        data_buf[bias_off + static_cast<uint32_t>(i)] = 0; /* Zero bias */
+    for (int i = 0; i < 64; ++i)
+        data_buf[out_off + static_cast<uint32_t>(i)] = 0xAA; /* Poison output */
+
+    printf("[VENUS][AIP] Input[0-3]:  %d %d %d %d\n",
+           data_buf[in_off + 0], data_buf[in_off + 1],
+           data_buf[in_off + 2], data_buf[in_off + 3]);
+    printf("[VENUS][AIP] Kernel[0]:   %d\n", data_buf[kern_off]);
+    printf("[VENUS][AIP] Output[0-3]: %d %d %d %d (before)\n",
+           data_buf[out_off + 0], data_buf[out_off + 1],
+           data_buf[out_off + 2], data_buf[out_off + 3]);
+    fflush(stdout);
+
+    __sync_synchronize();
+
+    int status = aip_conv2d(&ctx,
+                            data_paddr + in_off,
+                            data_paddr + out_off,
+                            data_paddr + kern_off,
+                            data_paddr + bias_off,
+                            /* in_w,  in_h,  in_c  */ 8, 8, 1,
+                            /* out_w, out_h, out_c */ 8, 8, 1,
+                            /* kernel_w, kernel_h */ 1, 1,
+                            /* stride, pad        */ 1, 0);
+
+    printf("[VENUS][AIP] aip_conv2d() returned status=%d\n", status);
+    fflush(stdout);
+
+    __sync_synchronize();
+
+    printf("[VENUS][AIP] Output[0-7]: %d %d %d %d %d %d %d %d\n",
+           data_buf[out_off + 0], data_buf[out_off + 1],
+           data_buf[out_off + 2], data_buf[out_off + 3],
+           data_buf[out_off + 4], data_buf[out_off + 5],
+           data_buf[out_off + 6], data_buf[out_off + 7]);
+    fflush(stdout);
+
+    aip_cleanup(&ctx);
+}
+
 int MagikModelBase::run() {
 	printf("[VENUS] MagikModelBase::run() - BEGIN (logging-only) this=%p active=%p\n",
 	       (void*)this, (void*)g_active_model);
 	printf("[VENUS] MARKER_1\n");
 	fflush(stdout);
+
+		/* Optional Venus-side AIP smoke test. When VENUS_AIP_SMOKE is set to a
+		 * non-zero value in the environment, we run a small ORAM-backed AIP-F
+		 * convolution here. This should produce the same /dev/jzaip_* IOCTLs and
+		 * kernel traces as tools/aip_lib_test, but driven from the Venus/mgk
+		 * runtime path.
+		 */
+		const char *aip_env = std::getenv("VENUS_AIP_SMOKE");
+		if (aip_env && aip_env[0] && aip_env[0] != '0') {
+			printf("[VENUS][AIP] VENUS_AIP_SMOKE set; running venus_aip_smoke_conv()\n");
+			fflush(stdout);
+			venus_aip_smoke_conv();
+		}
 
 	// Show expected offsets vs actual content at those offsets
 	printf("[VENUS] Expected offsets in MagikModelBase:\n");

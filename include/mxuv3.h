@@ -290,6 +290,193 @@ static inline void mxuv3_memset_64(void *dst, uint8_t value, size_t size) {
     }
 }
 
+/*
+ * ============================================================================
+ * MXUv3 COMPUTE INSTRUCTIONS (COP2 opcode = 0x12)
+ * ============================================================================
+ *
+ * COP2 instruction format (32-bit):
+ * [31:26] = 010010 (COP2 = 0x12 = 18)
+ * [25:21] = rs (operation class selector)
+ * [20:16] = rt (source VPR register 2)
+ * [15:11] = rd (destination VPR register)
+ * [10:6]  = sa (source VPR register 1)
+ * [5:0]   = fn (function code within operation class)
+ *
+ * Known rs values (operation classes):
+ *   rs=19: Multiply operations (fn=35 = MUL)
+ *   rs=20: Add/Sub operations (fn=3 = ADD, fn=11 = SUB)
+ *
+ * Binary operation formula: VPR[rd] = VPR[sa] op VPR[rt]
+ * Unary operation (same reg): VPR[rd] = op(VPR[rd]) when rd=rt=sa
+ *
+ * Example encodings:
+ *   ADD: 0x4a84__83 = rs=20, fn=3
+ *   SUB: 0x4a84__8b = rs=20, fn=11
+ *   MUL: 0x4a64__a3 = rs=19, fn=35
+ */
+
+/*
+ * Build COP2 instruction encoding
+ * op=0x12 (COP2), remaining fields as parameters
+ */
+#define MXUV3_COP2_INST(rs, rt, rd, sa, fn) \
+    (0x48000000 | ((rs) << 21) | ((rt) << 16) | ((rd) << 11) | ((sa) << 6) | (fn))
+
+/*
+ * VPR_ADD - Vector Add (16 floats) - IN-PLACE
+ * VPR[dst] = VPR[src] + VPR[dst]
+ * Hardware constraint: rd must equal sa
+ * Encoding: rs=20, rt=src, rd=dst, sa=dst, fn=3
+ */
+#define VPR_ADD(dst, src) do { \
+    __asm__ __volatile__( \
+        ".word %0\n sync\n" \
+        :: "i"(MXUV3_COP2_INST(20, src, dst, dst, 3)) \
+        : "memory" \
+    ); \
+} while(0)
+
+/*
+ * VPR_SUB - Vector Subtract (16 floats) - IN-PLACE
+ * VPR[dst] = VPR[src] - VPR[dst]
+ * Hardware constraint: rd must equal sa
+ * Encoding: rs=20, rt=src, rd=dst, sa=dst, fn=11
+ */
+#define VPR_SUB(dst, src) do { \
+    __asm__ __volatile__( \
+        ".word %0\n sync\n" \
+        :: "i"(MXUV3_COP2_INST(20, src, dst, dst, 11)) \
+        : "memory" \
+    ); \
+} while(0)
+
+/*
+ * VPR_MUL - Vector Multiply (16 floats) - IN-PLACE
+ * VPR[dst] = VPR[src] * VPR[dst]
+ * Hardware constraint: rd must equal sa
+ * Encoding: rs=19, rt=src, rd=dst, sa=dst, fn=35
+ */
+#define VPR_MUL(dst, src) do { \
+    __asm__ __volatile__( \
+        ".word %0\n sync\n" \
+        :: "i"(MXUV3_COP2_INST(19, src, dst, dst, 35)) \
+        : "memory" \
+    ); \
+} while(0)
+
+/*
+ * VPR_SQR - Vector Square (Unary: same register for all operands)
+ * VPR[reg] = VPR[reg] * VPR[reg]
+ * This is MUL with the same register for src1, src2, and dst
+ * Encoding: rs=19, fn=35, rt=rd=sa=reg
+ */
+#define VPR_SQR(reg) do { \
+    __asm__ __volatile__( \
+        ".word %0\n sync\n" \
+        :: "i"(MXUV3_COP2_INST(19, reg, reg, reg, 35)) \
+        : "memory" \
+    ); \
+} while(0)
+
+/*
+ * VPR_DBL - Vector Double (Unary: x + x = 2x)
+ * VPR[reg] = VPR[reg] + VPR[reg]
+ * This is ADD with the same register
+ * Encoding: rs=20, fn=3, rt=rd=sa=reg
+ */
+#define VPR_DBL(reg) do { \
+    __asm__ __volatile__( \
+        ".word %0\n sync\n" \
+        :: "i"(MXUV3_COP2_INST(20, reg, reg, reg, 3)) \
+        : "memory" \
+    ); \
+} while(0)
+
+/*
+ * VPR_ZERO - Vector Zero (Unary: x - x = 0)
+ * VPR[reg] = VPR[reg] - VPR[reg] = 0
+ * This is SUB with the same register
+ * Encoding: rs=20, fn=11, rt=rd=sa=reg
+ */
+#define VPR_ZERO(reg) do { \
+    __asm__ __volatile__( \
+        ".word %0\n sync\n" \
+        :: "i"(MXUV3_COP2_INST(20, reg, reg, reg, 11)) \
+        : "memory" \
+    ); \
+} while(0)
+
+/*
+ * Inline functions for VPR arithmetic (convenient for C usage)
+ * These operate on VPR0-3 which are commonly used for computation
+ */
+
+/* VPR0 = VPR1 + VPR0 (in-place add) */
+static inline void mxuv3_add_vpr0_vpr1(void) {
+    VPR_ADD(0, 1);
+}
+
+/* VPR0 = VPR1 - VPR0 (in-place sub) */
+static inline void mxuv3_sub_vpr0_vpr1(void) {
+    VPR_SUB(0, 1);
+}
+
+/* VPR0 = VPR1 * VPR0 (in-place mul) */
+static inline void mxuv3_mul_vpr0_vpr1(void) {
+    VPR_MUL(0, 1);
+}
+
+/* VPR0 = VPR0 * VPR0 (square) */
+static inline void mxuv3_sqr_vpr0(void) {
+    VPR_SQR(0);
+}
+
+/* VPR0 = VPR0 + VPR0 (double) */
+static inline void mxuv3_dbl_vpr0(void) {
+    VPR_DBL(0);
+}
+
+/* VPR0 = 0 */
+static inline void mxuv3_zero_vpr0(void) {
+    VPR_ZERO(0);
+}
+
+/*
+ * Instruction encodings reference table:
+ *
+ * | Operation | rs | fn | Hex Pattern     | Formula                    |
+ * |-----------|----|----|-----------------|----------------------------|
+ * | ADD       | 20 |  3 | 0x4a84xxxx + 83 | VPR[rd] = VPR[sa] + VPR[rt]|
+ * | SUB       | 20 | 11 | 0x4a84xxxx + 8b | VPR[rd] = VPR[sa] - VPR[rt]|
+ * | MUL       | 19 | 35 | 0x4a64xxxx + a3 | VPR[rd] = VPR[sa] * VPR[rt]|
+ * | SQR       | 19 | 35 | (unary MUL)     | VPR[rd] = VPR[rd]^2        |
+ * | DBL       | 20 |  3 | (unary ADD)     | VPR[rd] = VPR[rd] * 2      |
+ * | ZERO      | 20 | 11 | (unary SUB)     | VPR[rd] = 0                |
+ *
+ * ============================================================================
+ * IMPORTANT: DIV, SQRT, RSQRT, RECIP do NOT exist in MXUv3!
+ * ============================================================================
+ *
+ * Analysis of libvenus.so confirms that division and square root operations
+ * use the standard MIPS FPU instructions (div.s, sqrt.s), NOT MXU:
+ *   - 511 occurrences of FPU div.s in libvenus
+ *   - 35 occurrences of FPU sqrt.s in libvenus
+ *   - 0 occurrences of any MXU reciprocal instruction
+ *
+ * For neural network inference, division is typically avoided by:
+ *   1. Pre-computing reciprocals during model quantization (on host CPU)
+ *   2. Storing 1/sqrt(variance) as weights for batch norm fusion
+ *   3. Using MXU MUL with pre-computed reciprocals at runtime
+ *
+ * Example batch norm optimization:
+ *   Instead of:  y = (x - mean) / sqrt(variance)
+ *   Compute:     scale = 1 / sqrt(variance)  [on CPU, store in model]
+ *   At runtime:  y = (x - mean) * scale      [MXU SUB + MUL]
+ *
+ * For Mars runtime: use scalar FPU for any division/sqrt, or pre-compute.
+ */
+
 #else /* !__mips__ */
 
 /* Stub implementations for non-MIPS builds */
@@ -302,6 +489,21 @@ static inline void mxuv3_store_vpr0(void *ptr) { (void)ptr; }
 static inline void mxuv3_store_vpr1(void *ptr) { (void)ptr; }
 
 static inline uint32_t mxuv3_read_mir(void) { return 0; }
+
+/* Stub compute macros for non-MIPS builds */
+#define VPR_ADD(dst, src1, src2) ((void)0)
+#define VPR_SUB(dst, src1, src2) ((void)0)
+#define VPR_MUL(dst, src1, src2) ((void)0)
+#define VPR_SQR(reg) ((void)0)
+#define VPR_DBL(reg) ((void)0)
+#define VPR_ZERO(reg) ((void)0)
+
+static inline void mxuv3_add_vpr0_vpr1_vpr2(void) {}
+static inline void mxuv3_sub_vpr0_vpr1_vpr2(void) {}
+static inline void mxuv3_mul_vpr0_vpr1_vpr2(void) {}
+static inline void mxuv3_sqr_vpr0(void) {}
+static inline void mxuv3_dbl_vpr0(void) {}
+static inline void mxuv3_zero_vpr0(void) {}
 
 #define MXUV3_VPR_SIZE      64
 #define MXUV3_VPR_ALIGN     64

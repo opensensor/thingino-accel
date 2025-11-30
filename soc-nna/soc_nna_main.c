@@ -86,19 +86,27 @@ int soc_nna_open(struct inode *inode, struct file *file)
 
 	mutex_lock(&pnna->mlock);
 #ifdef CONFIG_SOC_T41
-	__asm__ volatile(
-			".set push		\n\t"
-			".set mips32r2	\n\t"
-			"sync			\n\t"
-			"lw $0,0(%0)	\n\t"
-			::"r" (0xa0000000));
-	*((volatile unsigned int *)(0xb3012038)) = 0x88404002;
-	__asm__ volatile(
-			".set push		\n\t"
-			".set mips32r2	\n\t"
-			"sync			\n\t"
-			"lw $0,0(%0)	\n\t"
-			::"r" (0xa0000000));
+	{
+		volatile unsigned int *sys_reg = (volatile unsigned int *)(0xb3012038);
+		unsigned int old_val, new_val;
+
+		__asm__ volatile(
+				".set push		\n\t"
+				".set mips32r2	\n\t"
+				"sync			\n\t"
+				"lw $0,0(%0)	\n\t"
+				::"r" (0xa0000000));
+		old_val = *sys_reg;
+		*sys_reg = 0x88404002;
+		__asm__ volatile(
+				".set push		\n\t"
+				".set mips32r2	\n\t"
+				"sync			\n\t"
+				"lw $0,0(%0)	\n\t"
+				::"r" (0xa0000000));
+		new_val = *sys_reg;
+		printk("soc_nna: T41 sys_reg 0x13012038: 0x%08x -> 0x%08x (wrote 0x88404002)\n", old_val, new_val);
+	}
 #endif
 	if (pnna->refcnt++ == 0) {
 		b_first_open = true;

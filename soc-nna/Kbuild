@@ -1,15 +1,15 @@
 MODULE_NAME := soc-nna
 OUT := $(MODULE_NAME)
 
-DIR=$(KERNEL_VERSION)/misc/soc-nna
-
 SRCS := \
-  $(DIR)/soc_nna_main.c \
-  $(DIR)/platform.c
+  soc_nna_main.c \
+  platform.c
 
-OBJS := $(SRCS:%.c=%.o) $(ASM_SRCS:%.S=%.o)
+OBJS := $(SRCS:%.c=%.o)
 
 $(OUT)-objs := $(OBJS)
 
 obj-m += $(OUT).o
+
+ccflags-y := -DCONFIG_SOC_T41
 

@@ -72,7 +72,9 @@ typedef enum {
     MARS_LAYER_UPSAMPLE = 13,
     MARS_LAYER_RESHAPE = 14,
     MARS_LAYER_SOFTMAX = 15,
-    MARS_LAYER_FC = 16,     /* Fully connected */
+    MARS_LAYER_FC = 16,         /* Fully connected */
+    MARS_LAYER_TRANSPOSE = 17,  /* Transpose */
+    MARS_LAYER_BATCHNORM = 18,  /* BatchNorm: y = x * scale + bias (fused params) */
 } mars_layer_type_t;
 
 /* Activation type (fused with conv/fc) */

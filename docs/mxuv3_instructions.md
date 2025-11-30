@@ -308,11 +308,75 @@ The MAC sequence converts int8 input to float32:
 
 ## Limitations
 
-1. **MAC Operations Not Fully Decoded**: The exact multiply-accumulate formula is not yet understood. The c2 instructions appear to do data conversion but actual MAC results are stored in internal registers not accessible via VPR load/store.
+1. **MAC Operations Not Fully Decoded**: The exact multiply-accumulate formula for the c2 `func=0x0b/0x23` pair is not yet understood. These instructions clearly perform data conversion (int8→int16/float32) and some accumulation, but the final MAC results appear to live in internal accumulators rather than any VPR that we can load/store.
 
-2. **Store Instructions**: The func=0x2f, 0x34, 0x35 store instructions do not appear to write to the output buffer in our tests.
+2. **Store Instructions**: The func=0x2f, 0x34, 0x35 store instructions do not appear to write to the expected output buffer in our standalone tests. In Venus they are typically paired with NNA‑managed buffers and descriptor setup; they likely depend on proper NNDMA/AIP configuration.
 
-3. **NNA Hardware Dependency**: Full functionality requires NNA hardware initialization and memory allocation via `/dev/soc-nna`.
+3. **NNA Hardware Dependency**: Full functionality requires NNA hardware initialization and memory allocation via `/dev/soc-nna`. Using stack/heap buffers outside the NNA allocator typically gives only partial or no results.
+
+## COP2 Vector Arithmetic (ADD / SUB / MUL)
+
+In addition to the special MAC microcode above, libvenus makes heavy use of a much more conventional COP2 vector arithmetic class that operates on full 512‑bit VPR registers as 16× `float32` lanes.
+
+### Encoding
+
+- Opcode: **COP2** (`0x12`)
+- Fields:
+  - `rs` – operation class selector
+  - `rt` – source vector 2
+  - `rd` – destination vector
+  - `sa` – source vector 1 (often must equal `rd`)
+  - `fn` – function within the operation class
+
+From libvenus disassembly we see two main classes:
+
+- **rs = 20** – Add/Sub class
+  - `fn = 3`  → **ADD**  — `VPR[rd] = VPR[sa] + VPR[rt]`
+  - `fn = 11` → **SUB**  — `VPR[rd] = VPR[sa] - VPR[rt]`
+- **rs = 19** – Multiply class
+  - `fn = 35` → **MUL**  — `VPR[rd] = VPR[sa] * VPR[rt]`
+
+With the hardware constraint that for in‑place operations we use `rd = sa` so the instruction behaves like:
+
+- `ADD`: `VPR[dst] = VPR[dst] + VPR[src]`
+- `SUB`: `VPR[dst] = VPR[dst] - VPR[src]`
+- `MUL`: `VPR[dst] = VPR[dst] * VPR[src]`
+
+These encodings are wrapped in `include/mxuv3.h` as:
+
+- `VPR_ADD(dst, src)` – 16‑lane float vector add
+- `VPR_SUB(dst, src)` – 16‑lane float vector subtract
+- `VPR_MUL(dst, src)` – 16‑lane float vector multiply
+
+and are used by the Mars runtime in `src/mars/mxu_conv.c` to implement MXU‑accelerated elementwise ops and convolutions.
+
+### Unary Variants
+
+By setting all three registers equal (`rt = rd = sa`), we get useful unary variants:
+
+- `VPR_SQR(reg)`  — `VPR[reg] = VPR[reg] * VPR[reg]`
+- `VPR_DBL(reg)`  — `VPR[reg] = VPR[reg] + VPR[reg]`
+- `VPR_ZERO(reg)` — `VPR[reg] = VPR[reg] - VPR[reg] = 0`
+
+These are exposed in `mxuv3.h` and are handy building blocks for activation functions and simple fused arithmetic in Mars.
+
+## Missing Vector Instructions (DIV / SQRT / RSQRT)
+
+A negative but important discovery from libvenus is that **MXUv3 does not provide vector division or square‑root instructions**:
+
+- There are **hundreds** of scalar FPU `div.s` and `sqrt.s` instructions in libvenus.
+- There are **zero** MXU opcodes that look like reciprocal, rsqrt, or divide operations.
+
+In practice Venus (and Mars) handle these operations by:
+
+1. **Precomputing reciprocals** during training or model conversion (e.g., batch‑norm fusion stores `1 / sqrt(variance)` directly in the weights).
+2. Using MXUv3 **MUL** for the runtime part (`y = (x - mean) * inv_std` instead of `y = (x - mean) / std`).
+3. Falling back to the scalar FPU for any rare true divide/sqrt that cannot be folded into weights.
+
+For Mars, the guideline is:
+
+- Prefer **MXU MUL/ADD/SUB** with pre‑baked constants.
+- Use scalar FPU only when absolutely necessary.
 
 ## Performance Results
 

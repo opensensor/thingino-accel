@@ -65,6 +65,7 @@ pub enum LayerType {
     Transpose = 15,
     FullyConnected = 16,
     Softmax = 17,
+    BatchNorm = 18,  // BatchNormalization: y = (x - mean) / sqrt(var + eps) * gamma + beta
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
