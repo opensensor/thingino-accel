@@ -548,13 +548,13 @@ static mars_error_t execute_conv2d(mars_model_t *model, mars_runtime_layer_t *la
         }
     }
 
-    /* Extract dimensions - NHWC format */
-    int in_h = input->desc.shape[1];
-    int in_w = input->desc.shape[2];
-    int in_c = input->desc.shape[3];
-    int out_h = output->desc.shape[1];
-    int out_w = output->desc.shape[2];
-    int out_c = output->desc.shape[3];
+    /* Extract dimensions - NCHW format (batch, channels, height, width) */
+    int in_c = input->desc.shape[1];
+    int in_h = input->desc.shape[2];
+    int in_w = input->desc.shape[3];
+    int out_c = output->desc.shape[1];
+    int out_h = output->desc.shape[2];
+    int out_w = output->desc.shape[3];
 
     /* Calculate padding for SAME mode */
     int pad_top = 0, pad_left = 0;

@@ -158,7 +158,12 @@ $(BIN_DIR)/mars_layer_bench: $(EXAMPLES_DIR)/mars_layer_bench.c $(OBJ_DIR)/mars_
 	$(CC) $(CFLAGS) $< $(OBJ_DIR)/mars_mars_nn_hw.o $(OBJ_DIR)/mars_mars_math.o $(OBJ_DIR)/mars_mxu_ops.o -o $@ $(LDFLAGS) -lnna $(LIBS) -lm
 	@echo "Built Mars Layer benchmark: $@"
 
-examples: $(EXAMPLE_BINS) $(CXX_EXAMPLE_BINS) $(BIN_DIR)/mars_test $(BIN_DIR)/nna_dma_test $(BIN_DIR)/mars_nna_bench $(BIN_DIR)/mars_conv_bench $(BIN_DIR)/mars_layer_bench
+# Mars Inference test (end-to-end pipeline)
+$(BIN_DIR)/mars_inference_test: $(EXAMPLES_DIR)/mars_inference_test.c $(OBJ_DIR)/mars_mars_nn_hw.o $(OBJ_DIR)/mars_mars_math.o $(OBJ_DIR)/mars_mxu_ops.o $(LIB_NNA_STATIC) | $(BIN_DIR)
+	$(CC) $(CFLAGS) $< $(OBJ_DIR)/mars_mars_nn_hw.o $(OBJ_DIR)/mars_mars_math.o $(OBJ_DIR)/mars_mxu_ops.o -o $@ $(LDFLAGS) -lnna $(LIBS) -lm
+	@echo "Built Mars Inference test: $@"
+
+examples: $(EXAMPLE_BINS) $(CXX_EXAMPLE_BINS) $(BIN_DIR)/mars_test $(BIN_DIR)/nna_dma_test $(BIN_DIR)/mars_nna_bench $(BIN_DIR)/mars_conv_bench $(BIN_DIR)/mars_layer_bench $(BIN_DIR)/mars_inference_test
 
 # Install (for cross-compilation, just copy to build dir)
 install: all

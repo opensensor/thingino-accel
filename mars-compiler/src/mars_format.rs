@@ -276,6 +276,26 @@ pub struct UpsampleParams {
     pub mode: u32,  // 0=nearest, 1=bilinear
 }
 
+/// Reshape parameters
+#[derive(Debug, Clone, Default)]
+pub struct ReshapeParams {
+    pub target_shape: [i32; 6],  // Target shape dimensions
+    pub ndims: u32,              // Number of dimensions
+}
+
+/// Transpose parameters
+#[derive(Debug, Clone, Default)]
+pub struct TransposeParams {
+    pub perm: [u32; 6],  // Permutation indices
+    pub ndims: u32,      // Number of dimensions
+}
+
+/// Softmax parameters
+#[derive(Debug, Clone, Default)]
+pub struct SoftmaxParams {
+    pub axis: u32,  // Axis to apply softmax
+}
+
 /// Layer parameters union
 #[derive(Debug, Clone)]
 pub enum LayerParams {
@@ -283,6 +303,9 @@ pub enum LayerParams {
     Pool(PoolParams),
     Concat(ConcatParams),
     Upsample(UpsampleParams),
+    Reshape(ReshapeParams),
+    Transpose(TransposeParams),
+    Softmax(SoftmaxParams),
     None,
 }
 
@@ -325,7 +348,48 @@ impl MarsLayer {
         // Write params (64 bytes)
         match &self.params {
             LayerParams::Conv(p) => p.write(w)?,
-            _ => w.write_all(&[0u8; 64])?,
+            LayerParams::Pool(p) => {
+                w.write_u32::<LittleEndian>(p.kernel_h)?;
+                w.write_u32::<LittleEndian>(p.kernel_w)?;
+                w.write_u32::<LittleEndian>(p.stride_h)?;
+                w.write_u32::<LittleEndian>(p.stride_w)?;
+                w.write_u32::<LittleEndian>(p.padding as u32)?;
+                w.write_u32::<LittleEndian>(p.pad_top)?;
+                w.write_u32::<LittleEndian>(p.pad_bottom)?;
+                w.write_u32::<LittleEndian>(p.pad_left)?;
+                w.write_u32::<LittleEndian>(p.pad_right)?;
+                w.write_all(&[0u8; 28])?;  // Pad to 64 bytes
+            }
+            LayerParams::Concat(p) => {
+                w.write_u32::<LittleEndian>(p.axis)?;
+                w.write_u32::<LittleEndian>(p.num_inputs)?;
+                w.write_all(&[0u8; 56])?;
+            }
+            LayerParams::Upsample(p) => {
+                w.write_u32::<LittleEndian>(p.scale_h)?;
+                w.write_u32::<LittleEndian>(p.scale_w)?;
+                w.write_u32::<LittleEndian>(p.mode)?;
+                w.write_all(&[0u8; 52])?;
+            }
+            LayerParams::Reshape(p) => {
+                for &dim in &p.target_shape {
+                    w.write_i32::<LittleEndian>(dim)?;
+                }
+                w.write_u32::<LittleEndian>(p.ndims)?;
+                w.write_all(&[0u8; 36])?;  // 64 - 24 - 4 = 36
+            }
+            LayerParams::Transpose(p) => {
+                for &idx in &p.perm {
+                    w.write_u32::<LittleEndian>(idx)?;
+                }
+                w.write_u32::<LittleEndian>(p.ndims)?;
+                w.write_all(&[0u8; 36])?;  // 64 - 24 - 4 = 36
+            }
+            LayerParams::Softmax(p) => {
+                w.write_u32::<LittleEndian>(p.axis)?;
+                w.write_all(&[0u8; 60])?;
+            }
+            LayerParams::None => w.write_all(&[0u8; 64])?,
         }
         Ok(())
     }

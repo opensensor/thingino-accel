@@ -57,7 +57,8 @@ fn map_onnx_op_to_mars(op_type: &str) -> Option<LayerType> {
         // BatchNorm should be folded into Conv, but keep as separate layer for now
         "BatchNormalization" => Some(LayerType::BatchNorm),
         // Skip these ops - they get folded or are handled differently
-        "Constant" | "Shape" | "Gather" | "Slice" | "Split" | "Sub" | "Div" | "Unsqueeze" => None,
+        // Pow is used in SiLU (x * sigmoid(x)) but we handle via Sigmoid+Mul
+        "Constant" | "Shape" | "Gather" | "Slice" | "Split" | "Sub" | "Div" | "Unsqueeze" | "Pow" => None,
         _ => {
             eprintln!("Warning: Unknown op type: {}", op_type);
             None
@@ -181,6 +182,9 @@ impl MarsCompiler {
             LayerType::Concat => self.process_concat(node)?,
             LayerType::Upsample => self.process_upsample(node)?,
             LayerType::BatchNorm => self.process_batchnorm(node)?,
+            LayerType::Reshape => self.process_reshape(node)?,
+            LayerType::Transpose => self.process_transpose(node)?,
+            LayerType::Softmax => self.process_softmax(node)?,
             _ => {
                 if self.verbose {
                     println!("Skipping layer type: {:?}", layer_type);
@@ -675,7 +679,10 @@ impl MarsCompiler {
     fn process_concat(&mut self, node: &OnnxNode) -> Result<()> {
         let layer_id = self.layers.len() as u32;
 
-        let axis = node.get_int("axis").unwrap_or(1) as u32;
+        // Handle negative axis (common in ONNX: -1 means last dim)
+        let raw_axis = node.get_int("axis").unwrap_or(1);
+        let axis = if raw_axis < 0 { (4 + raw_axis) as u32 } else { raw_axis as u32 };
+        let axis = axis.min(3);  // Clamp to valid range
 
         let mut layer = MarsLayer::new(layer_id, LayerType::Concat);
         layer.num_inputs = node.inputs.len().min(4) as u32;
@@ -692,7 +699,9 @@ impl MarsCompiler {
             if i == 0 {
                 base_shape = shape;
             }
-            total_axis_size += shape[axis as usize];
+            if (axis as usize) < 4 {
+                total_axis_size += shape[axis as usize];
+            }
         }
 
         let output_name = node.outputs.get(0).context("Concat missing output")?;
@@ -701,7 +710,9 @@ impl MarsCompiler {
 
         // Output shape: same as first input, but axis dimension is sum of all inputs
         let mut out_shape = base_shape;
-        out_shape[axis as usize] = total_axis_size;
+        if (axis as usize) < 4 {
+            out_shape[axis as usize] = total_axis_size;
+        }
         self.update_tensor_shape(output_id, &out_shape);
 
         layer.params = LayerParams::Concat(ConcatParams {
@@ -757,6 +768,125 @@ impl MarsCompiler {
             scale_w,
             mode: mode_val,
         });
+
+        self.layers.push(layer);
+        Ok(())
+    }
+
+    fn process_reshape(&mut self, node: &OnnxNode) -> Result<()> {
+        let layer_id = self.layers.len() as u32;
+
+        let input_name = node.inputs.get(0).context("Reshape missing input")?;
+        let input_id = self.get_or_create_tensor(input_name);
+
+        let output_name = node.outputs.get(0).context("Reshape missing output")?;
+        let output_id = self.get_or_create_tensor(output_name);
+
+        // Get target shape from the second input (constant)
+        let mut target_shape = [0i32; 6];
+        let mut ndims = 4u32;
+        if let Some(shape_name) = node.inputs.get(1) {
+            if let Some(shape_data) = self.onnx.initializers.get(shape_name) {
+                // Shape is stored as int64
+                let dims: Vec<i64> = shape_data.data.chunks_exact(8)
+                    .map(|b| i64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]))
+                    .collect();
+                ndims = dims.len().min(6) as u32;
+                for (i, &d) in dims.iter().take(6).enumerate() {
+                    target_shape[i] = d as i32;
+                }
+            }
+        }
+
+        // Update output tensor shape
+        let mut out_shape = [1i32; 4];
+        for i in 0..4.min(ndims as usize) {
+            out_shape[i] = target_shape[i];
+        }
+        self.update_tensor_shape(output_id, &out_shape);
+
+        let mut layer = MarsLayer::new(layer_id, LayerType::Reshape);
+        layer.num_inputs = 1;
+        layer.num_outputs = 1;
+        layer.input_tensor_ids[0] = input_id;
+        layer.output_tensor_ids[0] = output_id;
+
+        // Store target shape in params (use generic params)
+        layer.params = LayerParams::Reshape(ReshapeParams {
+            target_shape,
+            ndims,
+        });
+
+        self.layers.push(layer);
+        Ok(())
+    }
+
+    fn process_transpose(&mut self, node: &OnnxNode) -> Result<()> {
+        let layer_id = self.layers.len() as u32;
+
+        let input_name = node.inputs.get(0).context("Transpose missing input")?;
+        let input_id = self.get_or_create_tensor(input_name);
+
+        let output_name = node.outputs.get(0).context("Transpose missing output")?;
+        let output_id = self.get_or_create_tensor(output_name);
+
+        // Get perm from attributes
+        let default_perm: Vec<i64> = vec![0, 1, 2, 3];
+        let perm = node.get_ints("perm").unwrap_or(&default_perm);
+        let mut perm_arr = [0u32; 6];
+        for (i, &p) in perm.iter().take(6).enumerate() {
+            perm_arr[i] = p as u32;
+        }
+
+        // Calculate output shape based on perm
+        let input_shape = self.get_tensor_shape(input_id);
+        let mut out_shape = [1i32; 4];
+        for i in 0..4.min(perm.len()) {
+            let src_idx = perm[i] as usize;
+            if src_idx < 4 {
+                out_shape[i] = input_shape[src_idx];
+            }
+        }
+        self.update_tensor_shape(output_id, &out_shape);
+
+        let mut layer = MarsLayer::new(layer_id, LayerType::Transpose);
+        layer.num_inputs = 1;
+        layer.num_outputs = 1;
+        layer.input_tensor_ids[0] = input_id;
+        layer.output_tensor_ids[0] = output_id;
+
+        layer.params = LayerParams::Transpose(TransposeParams {
+            perm: perm_arr,
+            ndims: perm.len() as u32,
+        });
+
+        self.layers.push(layer);
+        Ok(())
+    }
+
+    fn process_softmax(&mut self, node: &OnnxNode) -> Result<()> {
+        let layer_id = self.layers.len() as u32;
+
+        let input_name = node.inputs.get(0).context("Softmax missing input")?;
+        let input_id = self.get_or_create_tensor(input_name);
+
+        let output_name = node.outputs.get(0).context("Softmax missing output")?;
+        let output_id = self.get_or_create_tensor(output_name);
+
+        // Softmax preserves shape
+        let input_shape = self.get_tensor_shape(input_id);
+        self.update_tensor_shape(output_id, &input_shape);
+
+        let axis = node.get_int("axis").unwrap_or(-1);
+        let axis = if axis < 0 { (4 + axis) as u32 } else { axis as u32 };
+
+        let mut layer = MarsLayer::new(layer_id, LayerType::Softmax);
+        layer.num_inputs = 1;
+        layer.num_outputs = 1;
+        layer.input_tensor_ids[0] = input_id;
+        layer.output_tensor_ids[0] = output_id;
+
+        layer.params = LayerParams::Softmax(SoftmaxParams { axis });
 
         self.layers.push(layer);
         Ok(())

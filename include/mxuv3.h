@@ -15,6 +15,17 @@
 #ifdef __mips__
 
 /*
+ * Cache prefetch for hiding memory latency
+ * PREF hint=0 (load), hint=1 (store)
+ */
+#define PREFETCH_LOAD(addr) \
+    __asm__ __volatile__("pref 0, 0(%0)" :: "r"(addr))
+#define PREFETCH_LOAD_OFFSET(addr, offset) \
+    __asm__ __volatile__("pref 0, %1(%0)" :: "r"(addr), "i"(offset))
+#define PREFETCH_STORE(addr) \
+    __asm__ __volatile__("pref 1, 0(%0)" :: "r"(addr))
+
+/*
  * LA0 - Load Aligned 0
  * Loads 256 bits from memory to VPR register (need 2 loads for full 512-bit VPR)
  * Encoding: 0x71001811 | offset << 16 | n << 14 | vprn << 6
@@ -606,6 +617,176 @@ static inline void mxuv3_zero_vpr0(void) {
  * For Mars runtime: use scalar FPU for any division/sqrt, or pre-compute.
  */
 
+/*
+ * ============================================================================
+ * INT8 MAC Instructions (S{n}MAC family)
+ * ============================================================================
+ *
+ * These perform dot products of INT8 vectors with 32-bit accumulation into VSR.
+ *
+ * Instruction format:
+ *   S{Lseg}MAC{signedness}{B} vsd, vrs, vrp
+ *
+ * Where:
+ *   Lseg = segment length (1,2,4,8,16,32 words)
+ *   signedness = UUB (u8×u8), SUB (s8×u8), SSB (s8×s8)
+ *   vsd = destination VSR register (0-3)
+ *   vrs, vrp = source VPR registers
+ *
+ * Operation (for S4MACSSB as example):
+ *   M = (Lseg * 32) / 8 = 16 bytes per segment
+ *   For each segment j:
+ *     sum = 0
+ *     for i in 0..15:
+ *       sum += signed(vrs[byte,i]) * signed(vrp[byte,i])
+ *     VSR[vsd][word,j] += sum
+ *
+ * Encoding (COP2, based on PDF analysis):
+ *   [31:26] = 010010 (COP2 = 0x12)
+ *   [25:21] = Lseg encoding
+ *   [20:16] = vrs (source 1)
+ *   [15:11] = vrp (source 2)
+ *   [10:6]  = vsd (dest VSR)
+ *   [5:0]   = function code
+ *
+ * Function codes for MAC:
+ *   MACUUB (unsigned×unsigned byte): 0x20
+ *   MACSUB (signed×unsigned byte):   0x21
+ *   MACSSB (signed×signed byte):     0x22
+ *
+ * Lseg encoding (bits 25:21):
+ *   S1  = 0, S2  = 1, S4  = 2, S8  = 3, S16 = 4, S32 = 5
+ */
+
+/*
+ * INT8 MAC instruction encoding from MXUv3 PDF:
+ *
+ * Decoded from PDF example: S4MACSSB vsr0[0], vr0, vr1 = 0x4BC00F08
+ *
+ * Format (standard COP2):
+ *   [31:26] opcode = 0x12 (COP2)
+ *   [25:21] rs = 30 (0x1E) for MACSSB, 29 for MACSUB, 28 for MACUUB
+ *   [20:16] rt = vrs (first source VPR)
+ *   [15:11] rd = vrp (second source VPR)
+ *   [10:6]  sa = (mode << 2) | vsd, where mode=7 for S4
+ *   [5:0]   func = 8 for S4 segment
+ *
+ * Signedness (rs field):
+ *   rs=28 (0x1C) = MACUUB (U×U)
+ *   rs=29 (0x1D) = MACSUB (S×U)
+ *   rs=30 (0x1E) = MACSSB (S×S)
+ */
+
+#define MXUV3_MACUUB_RS  28  /* U×U */
+#define MXUV3_MACSUB_RS  29  /* S×U */
+#define MXUV3_MACSSB_RS  30  /* S×S byte */
+
+#define MXUV3_S4_MODE    7   /* Mode bits for S4 segment */
+#define MXUV3_S4_FUNC    8   /* Function code for S4 */
+
+/* Build S4MAC instruction: opcode=0x12, rs=type, rt=vrs, rd=vrp, sa=(mode<<2)|vsd, func=8 */
+#define MXUV3_S4MAC_INST(rs, vrs, vrp, vsd) \
+    (0x48000000 | ((rs) << 21) | ((vrs) << 16) | ((vrp) << 11) | \
+     ((MXUV3_S4_MODE << 2 | (vsd)) << 6) | MXUV3_S4_FUNC)
+
+/*
+ * S4MACSSB - 4-word segment, signed×signed byte MAC
+ * Encoding verified: S4MACSSB(0, 0, 1) = 0x4BC00F08
+ *
+ * Computes 4 dot products of 16 bytes each, accumulating to VSR:
+ *   VSR[vsd][0] += dot(vrs[0:15], vrp[0:15])
+ *   VSR[vsd][1] += dot(vrs[16:31], vrp[16:31])
+ *   VSR[vsd][2] += dot(vrs[32:47], vrp[32:47])
+ *   VSR[vsd][3] += dot(vrs[48:63], vrp[48:63])
+ */
+#define S4MACSSB(vsd, vrs, vrp) do { \
+    __asm__ __volatile__( \
+        ".word %0\n sync\n" \
+        :: "i"(MXUV3_S4MAC_INST(MXUV3_MACSSB_RS, vrs, vrp, vsd)) \
+        : "memory" \
+    ); \
+} while(0)
+
+/* S4MACSUB - 4-word segment, signed×unsigned byte MAC */
+#define S4MACSUB(vsd, vrs, vrp) do { \
+    __asm__ __volatile__( \
+        ".word %0\n sync\n" \
+        :: "i"(MXUV3_S4MAC_INST(MXUV3_MACSUB_RS, vrs, vrp, vsd)) \
+        : "memory" \
+    ); \
+} while(0)
+
+/* S4MACUUB - 4-word segment, unsigned×unsigned byte MAC */
+#define S4MACUUB(vsd, vrs, vrp) do { \
+    __asm__ __volatile__( \
+        ".word %0\n sync\n" \
+        :: "i"(MXUV3_S4MAC_INST(MXUV3_MACUUB_RS, vrs, vrp, vsd)) \
+        : "memory" \
+    ); \
+} while(0)
+
+/*
+ * S1MACSSB - 1-word segment (whole VPR as single segment)
+ * Computes single dot product of all 64 bytes
+ * Result: VSR[vsd] += sum(vrs[0:63] * vrp[0:63])
+ * Uses func=0 for S1 segment (tentative)
+ */
+#define MXUV3_S1_FUNC    0
+#define S1MACSSB(vsd, vrs, vrp) do { \
+    __asm__ __volatile__( \
+        ".word %0\n sync\n" \
+        :: "i"(0x48000000 | (MXUV3_MACSSB_RS << 21) | ((vrs) << 16) | ((vrp) << 11) | \
+               ((MXUV3_S4_MODE << 2 | (vsd)) << 6) | MXUV3_S1_FUNC) \
+        : "memory" \
+    ); \
+} while(0)
+
+/*
+ * Sum Register operations (from docs/mxuv3_instructions.md)
+ *
+ * Encoding: COP2 with rs=19 (0x4a600000 base)
+ *   SUMZ(vsd)           : rt=0, rd=0,   sa=vsd, fn=0x1c
+ *   MFSUM(vrd, vss)     : rt=0, rd=vss, sa=vrd, fn=0x0f
+ *   MFSUMZ(vrd, vsd)    : rt=0, rd=vsd, sa=vrd, fn=0x1e
+ *   MTSUM(vsd, vrs)     : rt=vrs, rd=0, sa=vsd, fn=0x1d
+ */
+
+/* SUMZ - Zero sum register */
+#define VSR_ZERO(vsr) do { \
+    __asm__ __volatile__( \
+        ".word %0\n sync\n" \
+        :: "i"(0x4a60001c | ((vsr) << 6)) \
+        : "memory" \
+    ); \
+} while(0)
+
+/* MFSUM - Move From SUM register to VPR (non-destructive) */
+#define MFSUM(vrd, vss) do { \
+    __asm__ __volatile__( \
+        ".word %0\n sync\n" \
+        :: "i"(0x4a60000f | ((vss) << 11) | ((vrd) << 6)) \
+        : "memory" \
+    ); \
+} while(0)
+
+/* MFSUMZ - Move From SUM register to VPR and Zero the sum register */
+#define MFSUMZ(vrd, vsd) do { \
+    __asm__ __volatile__( \
+        ".word %0\n sync\n" \
+        :: "i"(0x4a60001e | ((vsd) << 11) | ((vrd) << 6)) \
+        : "memory" \
+    ); \
+} while(0)
+
+/* MTSUM - Move To SUM register from VPR */
+#define MTSUM(vsd, vrs) do { \
+    __asm__ __volatile__( \
+        ".word %0\n sync\n" \
+        :: "i"(0x4a60001d | ((vrs) << 16) | ((vsd) << 6)) \
+        : "memory" \
+    ); \
+} while(0)
+
 #else /* !__mips__ */
 
 /* Stub implementations for non-MIPS builds */
@@ -630,6 +811,15 @@ static inline uint32_t mxuv3_read_mir(void) { return 0; }
 #define VPR_MINSW(vrd, vrs, vrp) ((void)0)
 #define VPR_MAXUB(vrd, vrs, vrp) ((void)0)
 #define VPR_MINUB(vrd, vrs, vrp) ((void)0)
+
+/* INT8 MAC stubs */
+#define S4MACSSB(vsd, vrs, vrp) ((void)0)
+#define S4MACSUB(vsd, vrs, vrp) ((void)0)
+#define S4MACUUB(vsd, vrs, vrp) ((void)0)
+#define S1MACSSB(vsd, vrs, vrp) ((void)0)
+#define MFSUM(vrd, vsr) ((void)0)
+#define MFSUMZ(vrd, vsr) ((void)0)
+#define VSR_ZERO(vsr) ((void)0)
 
 static inline void mxuv3_add_vpr0_vpr1_vpr2(void) {}
 static inline void mxuv3_sub_vpr0_vpr1_vpr2(void) {}
