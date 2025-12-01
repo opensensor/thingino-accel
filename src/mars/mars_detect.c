@@ -17,7 +17,7 @@
 extern void nna_cache_flush(void *ptr, size_t size);
 
 // YOLO parameters
-#define CONF_THRESHOLD 0.35f  // Detection confidence threshold
+#define CONF_THRESHOLD 0.15f  // Detection confidence threshold (lowered for INT8 quantized model)
 #define NMS_THRESHOLD 0.45f
 #define NUM_CLASSES 80
 #define INPUT_SIZE 640
@@ -61,6 +61,69 @@ typedef struct {
 // Sigmoid function
 static inline float sigmoid(float x) {
     return 1.0f / (1.0f + expf(-x));
+}
+
+// Compute IoU (Intersection over Union) between two boxes
+static float compute_iou(const Detection* a, const Detection* b) {
+    float x1 = fmaxf(a->x1, b->x1);
+    float y1 = fmaxf(a->y1, b->y1);
+    float x2 = fminf(a->x2, b->x2);
+    float y2 = fminf(a->y2, b->y2);
+
+    float inter_w = fmaxf(0.0f, x2 - x1);
+    float inter_h = fmaxf(0.0f, y2 - y1);
+    float inter_area = inter_w * inter_h;
+
+    float area_a = (a->x2 - a->x1) * (a->y2 - a->y1);
+    float area_b = (b->x2 - b->x1) * (b->y2 - b->y1);
+    float union_area = area_a + area_b - inter_area;
+
+    if (union_area <= 0) return 0.0f;
+    return inter_area / union_area;
+}
+
+// Non-Maximum Suppression - returns new count after suppression
+static int apply_nms(Detection* detections, int count, float nms_threshold) {
+    if (count <= 1) return count;
+
+    // Sort by confidence (simple bubble sort for small arrays)
+    for (int i = 0; i < count - 1; i++) {
+        for (int j = i + 1; j < count; j++) {
+            if (detections[j].confidence > detections[i].confidence) {
+                Detection tmp = detections[i];
+                detections[i] = detections[j];
+                detections[j] = tmp;
+            }
+        }
+    }
+
+    // Mark suppressed detections
+    int* suppressed = (int*)calloc(count, sizeof(int));
+    int kept = 0;
+
+    for (int i = 0; i < count; i++) {
+        if (suppressed[i]) continue;
+
+        // Keep this detection
+        if (i != kept) {
+            detections[kept] = detections[i];
+        }
+        kept++;
+
+        // Suppress overlapping detections of same class
+        for (int j = i + 1; j < count; j++) {
+            if (suppressed[j]) continue;
+            if (detections[j].class_id != detections[i].class_id) continue;
+
+            float iou = compute_iou(&detections[i], &detections[j]);
+            if (iou > nms_threshold) {
+                suppressed[j] = 1;
+            }
+        }
+    }
+
+    free(suppressed);
+    return kept;
 }
 
 // Simple JPEG loader using stb_image-style approach
@@ -206,37 +269,50 @@ static int decode_head(const int8_t* data, float scale, int scale_idx,
     printf("\n[Scale %d] Grid=%dx%d, stride=%d, scale=%.6f\n",
            scale_idx, grid_h, grid_w, stride, scale);
 
-    // Sample a few key positions where we expect to find the two people:
-    // Zidane (left): face around pixel (150, 250) -> grid pos depends on scale
-    // Ancelotti (right): face around pixel (500, 180) -> grid pos depends on scale
+    // Sample key positions - ONNX reference found high objectness at these positions:
+    // Scale 2 (20x20): [10,13], [10,14], [10,15], [15,8] - class 0 (person)
     int check_positions[4][2];
     if (scale_idx == 0) {  // 80x80, stride 8
-        check_positions[0][0] = 31; check_positions[0][1] = 18;  // Zidane ~(150,250)/8
-        check_positions[1][0] = 22; check_positions[1][1] = 62;  // Ancelotti ~(500,180)/8
-        check_positions[2][0] = 40; check_positions[2][1] = 40;  // Center
+        check_positions[0][0] = 39; check_positions[0][1] = 64;  // ONNX max obj
+        check_positions[1][0] = 40; check_positions[1][1] = 40;  // Center
+        check_positions[2][0] = 40; check_positions[2][1] = 52;  // ~[10,13]*4
         check_positions[3][0] = 0; check_positions[3][1] = 0;    // Corner
     } else if (scale_idx == 1) {  // 40x40, stride 16
-        check_positions[0][0] = 15; check_positions[0][1] = 9;   // Zidane
-        check_positions[1][0] = 11; check_positions[1][1] = 31;  // Ancelotti
-        check_positions[2][0] = 20; check_positions[2][1] = 20;  // Center
+        check_positions[0][0] = 29; check_positions[0][1] = 16;  // ONNX max obj
+        check_positions[1][0] = 20; check_positions[1][1] = 26;  // ~[10,13]*2
+        check_positions[2][0] = 20; check_positions[2][1] = 28;  // ~[10,14]*2
         check_positions[3][0] = 0; check_positions[3][1] = 0;    // Corner
     } else {  // 20x20, stride 32
-        check_positions[0][0] = 7; check_positions[0][1] = 4;    // Zidane
-        check_positions[1][0] = 5; check_positions[1][1] = 15;   // Ancelotti
-        check_positions[2][0] = 10; check_positions[2][1] = 10;  // Center
+        check_positions[0][0] = 15; check_positions[0][1] = 8;   // ONNX max obj (0.420) raw=-3
+        check_positions[1][0] = 14; check_positions[1][1] = 8;   // ONNX raw=-18
+        check_positions[2][0] = 10; check_positions[2][1] = 14;  // ONNX high obj (0.368)
         check_positions[3][0] = 0; check_positions[3][1] = 0;    // Corner
     }
 
-    printf("  Checking key positions (y,x):\n");
+    printf("  Checking key positions (y,x) - compare with ONNX reference:\n");
     for (int p = 0; p < 4; p++) {
         int y = check_positions[p][0];
         int x = check_positions[p][1];
         int offset = (y * grid_w + x) * 255;  // NHWC offset
+        // Print raw int8 values for all 3 anchors' objectness
         printf("    pos[%d,%d]: obj_raw=[%d,%d,%d] -> conf=[%.3f,%.3f,%.3f]\n",
                y, x, data[offset+4], data[offset+89], data[offset+174],
                sigmoid(data[offset+4] * scale),
                sigmoid(data[offset+89] * scale),
                sigmoid(data[offset+174] * scale));
+        // For scale 2, also print first 16 bytes and class scores
+        if (scale_idx == 2 && p < 3) {
+            printf("      -> first 16: [%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d]\n",
+                   data[offset+0], data[offset+1], data[offset+2], data[offset+3],
+                   data[offset+4], data[offset+5], data[offset+6], data[offset+7],
+                   data[offset+8], data[offset+9], data[offset+10], data[offset+11],
+                   data[offset+12], data[offset+13], data[offset+14], data[offset+15]);
+            int class0_raw = data[offset + 5];  // First class score for anchor 0
+            float class0_conf = sigmoid(class0_raw * scale);
+            float combined = sigmoid(data[offset+4] * scale) * class0_conf;
+            printf("      -> class0_raw=%d, class0_conf=%.3f, combined=%.3f\n",
+                   class0_raw, class0_conf, combined);
+        }
     }
 
     // Find max objectness in this head for debugging
@@ -432,6 +508,13 @@ static int decode_yolov5_heads(mars_model_t* model, Detection* detections, int m
                                i, detections, max_detections, num_dets);
     }
 
+    // Apply NMS to remove overlapping detections
+    if (num_dets > 0) {
+        int before_nms = num_dets;
+        num_dets = apply_nms(detections, num_dets, NMS_THRESHOLD);
+        printf("  NMS: %d -> %d detections (threshold=%.2f)\n", before_nms, num_dets, NMS_THRESHOLD);
+    }
+
     return num_dets;
 }
 
@@ -485,18 +568,8 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    printf("Preprocessing image (scale=%.6f)...\n", input->desc.scale);
-    printf("  [DEBUG] Input tensor id=%u, vaddr=%p\n", input->desc.id, input->vaddr);
-    printf("  [DEBUG] RGB first 16 bytes: ");
-    for (int i = 0; i < 16; i++) printf("%d ", rgb_image[i]);
-    printf("\n");
-
+    printf("Preprocessing image...\n");
     preprocess_image(rgb_image, (int8_t*)input->vaddr, INPUT_SIZE, INPUT_SIZE, input->desc.scale);
-
-    printf("  [DEBUG] Preprocessed first 16 bytes: ");
-    int8_t* inp = (int8_t*)input->vaddr;
-    for (int i = 0; i < 16; i++) printf("%d ", inp[i]);
-    printf("\n");
 
     /* Flush cache to ensure data is in memory before inference */
     nna_cache_flush(input->vaddr, INPUT_SIZE * INPUT_SIZE * 3);

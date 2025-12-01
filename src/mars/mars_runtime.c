@@ -478,17 +478,21 @@ void mars_free(mars_model_t *model) {
     if (!model) return;
 
     /* Free dynamically allocated tensors (I/O, skip connections, runtime) */
-    for (uint32_t i = 0; i < model->header.num_tensors; i++) {
-        mars_runtime_tensor_t *rt = &model->tensors[i];
-        /* buffer_idx == -1 means dedicated buffer via nna_malloc
-         * buffer_idx == -3 means runtime dynamic allocation
-         * Skip weight tensors (they point into DDR weight section) */
-        if (rt->vaddr != NULL && rt->desc.data_size == 0 &&
-            (rt->buffer_idx == -1 || rt->buffer_idx == -3)) {
-            /* Don't free if it's part of the weights DDR block */
-            if (rt->vaddr < model->ddr_base ||
-                rt->vaddr >= (uint8_t*)model->ddr_base + model->ddr_size) {
-                nna_free(rt->vaddr);
+    if (model->tensors) {
+        for (uint32_t i = 0; i < model->header.num_tensors; i++) {
+            mars_runtime_tensor_t *rt = &model->tensors[i];
+            /* buffer_idx == -1 means dedicated buffer via nna_malloc
+             * buffer_idx == -3 means runtime dynamic allocation
+             * Skip weight tensors (they point into DDR weight section) */
+            if (rt->vaddr != NULL && rt->desc.data_size == 0 &&
+                (rt->buffer_idx == -1 || rt->buffer_idx == -3)) {
+                /* Don't free if it's part of the weights DDR block */
+                if (model->ddr_base == NULL ||
+                    rt->vaddr < model->ddr_base ||
+                    (uintptr_t)rt->vaddr >= (uintptr_t)model->ddr_base + model->ddr_size) {
+                    nna_free(rt->vaddr);
+                    rt->vaddr = NULL;
+                }
             }
         }
     }
@@ -497,11 +501,12 @@ void mars_free(mars_model_t *model) {
     for (uint32_t b = 0; b < model->num_work_buffers; b++) {
         if (model->work_buffers[b] != NULL) {
             nna_free(model->work_buffers[b]);
+            model->work_buffers[b] = NULL;
         }
     }
 
-    free(model->layers);
-    free(model->tensors);
+    if (model->layers) free(model->layers);
+    if (model->tensors) free(model->tensors);
     free(model);
 }
 
@@ -686,9 +691,15 @@ mars_error_t mars_run(mars_model_t *model) {
         /* Dynamically assign output buffers for this layer */
         assign_output_buffers(model, i);
 
+        /* Progress indicator every 20 layers */
+        if ((i % 20 == 0) || i == model->header.num_layers - 1) {
+            fprintf(stderr, "  Layer %u/%u...\r", i, model->header.num_layers);
+            fflush(stderr);
+        }
+
         mars_error_t err = execute_layer(model, &model->layers[i]);
         if (err != MARS_OK) {
-            fprintf(stderr, "Mars: Layer %u execution failed\n", i);
+            fprintf(stderr, "\nMars: Layer %u execution failed (type=%u)\n", i, model->layers[i].desc.type);
             return err;
         }
         model->layers[i].is_executed = true;
@@ -886,34 +897,6 @@ static mars_error_t execute_conv2d(mars_model_t *model, mars_runtime_layer_t *la
         );
     } else if (is_nhwc) {
         /* INT8 NHWC MXU-accelerated convolution - faster gather */
-
-        /* Debug: print first layer info */
-        static int first_conv = 1;
-        if (first_conv) {
-            printf("  [DEBUG Conv0] Input tensor id=%u, vaddr=%p\n", input->desc.id, input->vaddr);
-            printf("  [DEBUG Conv0] Input first 16 bytes: ");
-            int8_t *in_ptr = (int8_t *)input->vaddr;
-            for (int i = 0; i < 16; i++) printf("%d ", in_ptr[i]);
-            printf("\n");
-
-            printf("  [DEBUG Conv0] Weight first 16 bytes: ");
-            int8_t *w_ptr = (int8_t *)weight->vaddr;
-            for (int i = 0; i < 16; i++) printf("%d ", w_ptr[i]);
-            printf("\n");
-
-            if (bias) {
-                printf("  [DEBUG Conv0] Bias first 16 int32: ");
-                int32_t *b_ptr = (int32_t *)bias->vaddr;
-                for (int i = 0; i < 16; i++) printf("%d ", b_ptr[i]);
-                printf("\n");
-            } else {
-                printf("  [DEBUG Conv0] No bias\n");
-            }
-
-            printf("  [DEBUG Conv0] Starting NHWC conv...\n");
-            fflush(stdout);
-        }
-
         conv2d_int8_nhwc_mxu(
             (int8_t *)input->vaddr, in_h, in_w, in_c,
             (int8_t *)weight->vaddr, out_c, params->kernel_h, params->kernel_w,
@@ -923,36 +906,6 @@ static mars_error_t execute_conv2d(mars_model_t *model, mars_runtime_layer_t *la
             pad_top, pad_left,
             input->desc.scale, weight->desc.scale, output->desc.scale
         );
-
-        /* Debug: print layer outputs periodically */
-        if (first_conv) {
-            printf("  [DEBUG Conv0] Output first 16 bytes: ");
-            int8_t *out_ptr = (int8_t *)output->vaddr;
-            for (int i = 0; i < 16; i++) printf("%d ", out_ptr[i]);
-            printf("\n");
-            first_conv = 0;
-        }
-
-        /* Debug: also print convs 1-2 and last few conv outputs */
-        static int conv_idx = 0;
-        conv_idx++;
-        if (conv_idx == 2) {  /* Second conv (after SiLU) */
-            printf("  [DEBUG Conv1] Input first 16 (expect SiLU output): ");
-            int8_t *in_ptr = (int8_t *)input->vaddr;
-            for (int i = 0; i < 16; i++) printf("%d ", in_ptr[i]);
-            printf("\n");
-            printf("  [DEBUG Conv1] Reference SiLU @ [0,0]: [19, 5, 14, 3, 9, -1, 6, 3, 16, -1, 19, 19, 0, -1, 32, 8]\n");
-            printf("  [DEBUG Conv1] Output first 16 bytes: ");
-            int8_t *out_ptr = (int8_t *)output->vaddr;
-            for (int i = 0; i < 16; i++) printf("%d ", out_ptr[i]);
-            printf("\n");
-        }
-        if (conv_idx >= 55 && conv_idx <= 60) {  /* Last few convs */
-            printf("  [DEBUG Conv%d] Output first 16 bytes: ", conv_idx);
-            int8_t *out_ptr = (int8_t *)output->vaddr;
-            for (int i = 0; i < 16; i++) printf("%d ", out_ptr[i]);
-            printf("\n");
-        }
     } else {
         /* INT8 NCHW MXU-accelerated convolution */
         conv2d_int8_mxu(
@@ -1074,15 +1027,8 @@ static mars_error_t execute_sigmoid(mars_model_t *model, mars_runtime_layer_t *l
         out[i] = (int8_t)q;
     }
 
-    /* Debug first sigmoid */
-    if (sigmoid_count == 1) {
-        fprintf(stderr, "  [Sigmoid #1] in_scale=%f, out_scale=%f\n", in_scale, out_scale);
-        fprintf(stderr, "    Input first 16: ");
-        for (int i = 0; i < 16 && i < (int)numel; i++) fprintf(stderr, "%d ", in[i]);
-        fprintf(stderr, "\n    Output first 16: ");
-        for (int i = 0; i < 16 && i < (int)numel; i++) fprintf(stderr, "%d ", out[i]);
-        fprintf(stderr, "\n");
-    }
+    /* Debug output disabled for performance */
+    (void)sigmoid_count;
 
     return MARS_OK;
 }
@@ -1153,20 +1099,8 @@ static mars_error_t execute_mul(mars_model_t *model, mars_runtime_layer_t *layer
         out[i] = (int8_t)q;
     }
 
-    /* Debug first Mul (SiLU) */
-    if (mul_count == 1) {
-        fprintf(stderr, "  [Mul #1 SiLU] scale_a=%f, scale_b=%f, scale_out=%f\n",
-                scale_a, scale_b, scale_out);
-        fprintf(stderr, "    Input A first 16: ");
-        for (int i = 0; i < 16 && i < (int)numel; i++) fprintf(stderr, "%d ", a[i]);
-        fprintf(stderr, "\n    Input B first 16: ");
-        for (int i = 0; i < 16 && i < (int)numel; i++) fprintf(stderr, "%d ", b[i]);
-        fprintf(stderr, "\n    Output first 16: ");
-        for (int i = 0; i < 16 && i < (int)numel; i++) fprintf(stderr, "%d ", out[i]);
-        fprintf(stderr, "\n");
-        /* Also show expected reference value:
-         * Reference SiLU output @ pos[0,0]: [19, 5, 14, 3, 9, -1, 6, 3, 16, -1, 19, 19, 0, -1, 32, 8] */
-    }
+    /* Debug output disabled for performance */
+    (void)mul_count;
 
     return MARS_OK;
 }
@@ -1320,24 +1254,8 @@ static mars_error_t execute_concat(mars_model_t *model, mars_runtime_layer_t *la
     int32_t out_w = output->desc.shape[2];
     int32_t out_c = output->desc.shape[3];
 
-    if (out_c >= 64 && out_c <= 256) {  /* FPN layer candidates */
-        fprintf(stderr, "  [Concat #%d] axis=%u, output shape=[%d,%d,%d,%d], out_scale=%f\n",
-                concat_count, axis, output->desc.shape[0], out_h, out_w, out_c, output->desc.scale);
-        /* Print input scales and values to check */
-        for (uint32_t n = 0; n < desc->num_inputs && n < 4; n++) {
-            mars_runtime_tensor_t *inp = get_tensor_by_id(model, desc->input_tensor_ids[n]);
-            if (inp && inp->vaddr) {
-                fprintf(stderr, "    Input %d: id=%u, scale=%f, shape=[%d,%d,%d,%d]\n",
-                        n, inp->desc.id, inp->desc.scale,
-                        inp->desc.shape[0], inp->desc.shape[1], inp->desc.shape[2], inp->desc.shape[3]);
-                /* Print first 16 values of this input at position [0,0] */
-                int8_t *inp_data = (int8_t *)inp->vaddr;
-                fprintf(stderr, "      Input values @ [0,0] first 16: ");
-                for (int i = 0; i < 16; i++) fprintf(stderr, "%d ", inp_data[i]);
-                fprintf(stderr, "\n");
-            }
-        }
-    }
+    /* Debug output disabled for performance */
+    (void)out_h; (void)out_w; (void)out_c; (void)concat_count;
 
     /*
      * Generic concat: for each input, copy data at the right offset along the axis.

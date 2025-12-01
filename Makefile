@@ -171,7 +171,7 @@ $(BIN_DIR)/mars_inference_test: $(EXAMPLES_DIR)/mars_inference_test.c $(OBJ_DIR)
 	$(CC) $(CFLAGS) $< $(OBJ_DIR)/mars_mars_nn_hw.o $(OBJ_DIR)/mars_mars_math.o $(OBJ_DIR)/mars_mxu_ops.o -o $@ $(LDFLAGS) -lnna $(LIBS) -lm
 	@echo "Built Mars Inference test: $@"
 
-examples: $(EXAMPLE_BINS) $(CXX_EXAMPLE_BINS) $(BIN_DIR)/mars_test $(BIN_DIR)/nna_dma_test $(BIN_DIR)/mars_nna_bench $(BIN_DIR)/mars_conv_bench $(BIN_DIR)/mars_layer_bench $(BIN_DIR)/mars_inference_test
+examples: $(EXAMPLE_BINS) $(CXX_EXAMPLE_BINS) $(BIN_DIR)/mars_test $(BIN_DIR)/mars_detect $(BIN_DIR)/nna_dma_test $(BIN_DIR)/mars_nna_bench $(BIN_DIR)/mars_conv_bench $(BIN_DIR)/mars_layer_bench $(BIN_DIR)/mars_inference_test
 
 # Install (for cross-compilation, just copy to build dir)
 install: all
