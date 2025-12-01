@@ -8,7 +8,7 @@ mod onnx_parser;
 use anyhow::{Context, Result};
 use clap::Parser;
 use indicatif::{ProgressBar, ProgressStyle};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
@@ -110,6 +110,8 @@ struct MarsCompiler {
     weights_data: Vec<u8>,
     tensor_map: HashMap<String, u32>,  // ONNX tensor name -> Mars tensor ID
     qdq_scales: HashMap<String, f32>,  // QDQ scale name -> scale value
+    sigmoid_inputs: HashMap<String, String>,  // Sigmoid output -> Sigmoid input (for SiLU detection)
+    skip_sigmoids: HashSet<String>,  // Sigmoid outputs to skip (will be fused into SiLU)
     has_qdq: bool,  // Model has QDQ (QuantizeLinear/DequantizeLinear) nodes
     quantize: bool,
     use_nhwc: bool,  // Use NHWC format for features (faster gather on device)
@@ -125,6 +127,8 @@ impl MarsCompiler {
             weights_data: Vec::new(),
             tensor_map: HashMap::new(),
             qdq_scales: HashMap::new(),
+            sigmoid_inputs: HashMap::new(),
+            skip_sigmoids: HashSet::new(),
             has_qdq: false,
             quantize,
             use_nhwc,
@@ -259,6 +263,61 @@ impl MarsCompiler {
         None
     }
 
+    /// Pre-scan nodes to identify SiLU patterns (Sigmoid output used by Mul with same input)
+    fn detect_silu_patterns(&mut self) {
+        // First pass: build a map of Sigmoid outputs to their inputs
+        // Key is the raw Sigmoid output name (without QDQ suffix)
+        let mut sigmoid_map: HashMap<String, String> = HashMap::new();
+        for node in &self.onnx.nodes {
+            if node.op_type == "Sigmoid" {
+                if let (Some(input), Some(output)) = (node.inputs.get(0), node.outputs.get(0)) {
+                    sigmoid_map.insert(output.clone(), input.clone());
+                }
+            }
+        }
+
+        // Second pass: find Mul nodes that use X and Sigmoid(X)
+        // In QDQ models, Mul inputs are like:
+        //   - /model.0/conv/Conv_output_0_DequantizeLinear_Output (X)
+        //   - /model.0/act/Sigmoid_output_0_DequantizeLinear_Output (Sigmoid(X))
+        // And Sigmoid input is:
+        //   - /model.0/conv/Conv_output_0_DequantizeLinear_Output (same X)
+        for node in &self.onnx.nodes {
+            if node.op_type == "Mul" {
+                if let (Some(input_a), Some(input_b)) = (node.inputs.get(0), node.inputs.get(1)) {
+                    // Strip QDQ suffix to get the base Sigmoid output name
+                    let strip_qdq = |s: &str| -> String {
+                        s.trim_end_matches("_DequantizeLinear_Output")
+                         .trim_end_matches("_QuantizeLinear_Output")
+                         .to_string()
+                    };
+
+                    // Check pattern: Mul(X, Sigmoid(X)) or Mul(Sigmoid(X), X)
+                    let check_pair = |sig_out_qdq: &str, other: &str| -> Option<String> {
+                        let sig_out_base = strip_qdq(sig_out_qdq);
+                        if let Some(sig_in) = sigmoid_map.get(&sig_out_base) {
+                            // Compare: Sigmoid's input should match the other Mul input
+                            if sig_in == other {
+                                return Some(sig_out_base);
+                            }
+                        }
+                        None
+                    };
+
+                    if let Some(sigmoid_out) = check_pair(input_a, input_b)
+                        .or_else(|| check_pair(input_b, input_a))
+                    {
+                        self.skip_sigmoids.insert(sigmoid_out);
+                    }
+                }
+            }
+        }
+
+        if self.verbose && !self.skip_sigmoids.is_empty() {
+            println!("  Found {} SiLU patterns to fuse", self.skip_sigmoids.len());
+        }
+    }
+
     /// Compile the ONNX model to Mars format
     fn compile(&mut self) -> Result<()> {
         if self.verbose {
@@ -284,6 +343,9 @@ impl MarsCompiler {
             None
         };
         
+        // Pre-scan to identify SiLU patterns (Sigmoid+Mul pairs that should be fused)
+        self.detect_silu_patterns();
+
         // Clone nodes to avoid borrow issues
         let nodes: Vec<_> = self.onnx.nodes.iter().cloned().collect();
         for (idx, node) in nodes.iter().enumerate() {
@@ -1075,12 +1137,28 @@ impl MarsCompiler {
     }
 
     fn process_activation(&mut self, node: &OnnxNode, layer_type: LayerType) -> Result<()> {
-        let layer_id = self.layers.len() as u32;
-
         let input_name = node.inputs.get(0).context("Activation missing input")?;
-        let input_id = self.get_or_create_tensor(input_name);
-
         let output_name = node.outputs.get(0).context("Activation missing output")?;
+
+        // Track Sigmoid input->output mapping for SiLU pattern detection
+        if layer_type == LayerType::Sigmoid {
+            self.sigmoid_inputs.insert(output_name.clone(), input_name.clone());
+
+            // Skip this Sigmoid if it will be fused into a SiLU layer
+            if self.skip_sigmoids.contains(output_name) {
+                // Still need to set up tensor aliasing so the Mul/SiLU can find it
+                let input_id = self.get_or_create_tensor(input_name);
+                // Alias the sigmoid output to its input (since SiLU will use the input directly)
+                self.tensor_map.insert(output_name.clone(), input_id);
+                if self.verbose {
+                    println!("  Skipping Sigmoid '{}' (will be fused into SiLU)", output_name);
+                }
+                return Ok(());
+            }
+        }
+
+        let layer_id = self.layers.len() as u32;
+        let input_id = self.get_or_create_tensor(input_name);
         let output_id = self.get_or_create_tensor(output_name);
 
         // Activation layers keep the same shape
@@ -1248,6 +1326,14 @@ impl MarsCompiler {
         // Elementwise ops can have 2 inputs
         let input_a = node.inputs.get(0).context("Elementwise missing input A")?;
         let input_b = node.inputs.get(1).context("Elementwise missing input B")?;
+
+        // Check for SiLU pattern: Mul(X, Sigmoid(X))
+        // This occurs when one input is a Sigmoid output and the other is the Sigmoid's input
+        if layer_type == LayerType::Mul {
+            if let Some(silu_input_id) = self.detect_silu_pattern(input_a, input_b) {
+                return self.emit_silu_layer(layer_id, silu_input_id, &node.outputs[0]);
+            }
+        }
 
         let input_a_id = self.get_or_create_tensor(input_a);
         let input_b_id = self.get_or_create_tensor(input_b);
@@ -1618,6 +1704,69 @@ impl MarsCompiler {
         layer.output_tensor_ids[0] = output_id;
 
         layer.params = LayerParams::Softmax(SoftmaxParams { axis });
+
+        self.layers.push(layer);
+        Ok(())
+    }
+
+    /// Detect SiLU pattern: Mul(X, Sigmoid(X))
+    /// Returns the tensor ID of X if pattern matches, None otherwise
+    fn detect_silu_pattern(&self, input_a: &str, input_b: &str) -> Option<u32> {
+        // Strip QDQ suffixes for lookup (Sigmoid outputs don't have QDQ suffix in sigmoid_inputs)
+        let strip_qdq = |s: &str| -> String {
+            s.trim_end_matches("_DequantizeLinear_Output")
+             .trim_end_matches("_QuantizeLinear_Output")
+             .to_string()
+        };
+
+        let input_a_base = strip_qdq(input_a);
+        let input_b_base = strip_qdq(input_b);
+
+        // Check if input_a is a Sigmoid output whose input is input_b
+        if let Some(sigmoid_input) = self.sigmoid_inputs.get(&input_a_base) {
+            // Sigmoid's input should match input_b (the X in SiLU(X))
+            if sigmoid_input == input_b {
+                // Pattern: Mul(Sigmoid(X), X) -> SiLU(X)
+                return self.tensor_map.get(input_b).copied();
+            }
+        }
+
+        // Check if input_b is a Sigmoid output whose input is input_a
+        if let Some(sigmoid_input) = self.sigmoid_inputs.get(&input_b_base) {
+            if sigmoid_input == input_a {
+                // Pattern: Mul(X, Sigmoid(X)) -> SiLU(X)
+                return self.tensor_map.get(input_a).copied();
+            }
+        }
+
+        None
+    }
+
+    /// Emit a fused SiLU layer instead of separate Sigmoid + Mul
+    fn emit_silu_layer(&mut self, layer_id: u32, input_id: u32, output_name: &str) -> Result<()> {
+        let output_id = self.get_or_create_tensor(output_name);
+
+        // SiLU preserves shape
+        let input_shape = self.get_tensor_shape(input_id);
+        self.update_tensor_shape(output_id, &input_shape);
+
+        // SiLU output scale: same as input (range approximately preserved)
+        if self.quantize {
+            let in_scale = self.get_tensor_scale(input_id);
+            // Use QDQ scale if available, otherwise use input scale
+            let out_scale = self.get_qdq_scale(output_name).unwrap_or(in_scale);
+            self.set_tensor_scale(output_id, out_scale);
+        }
+
+        let mut layer = MarsLayer::new(layer_id, LayerType::Silu);
+        layer.num_inputs = 1;
+        layer.num_outputs = 1;
+        layer.input_tensor_ids[0] = input_id;
+        layer.output_tensor_ids[0] = output_id;
+
+        if self.verbose {
+            println!("  Fused SiLU[{}]: input={} output={}", layer_id, input_id, output_id);
+        }
 
         self.layers.push(layer);
         Ok(())

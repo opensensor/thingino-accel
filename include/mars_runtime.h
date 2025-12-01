@@ -49,7 +49,7 @@ typedef struct {
 } mars_runtime_layer_t;
 
 /* Maximum working buffers for dynamic allocation */
-#define MARS_MAX_WORK_BUFFERS 4
+#define MARS_MAX_WORK_BUFFERS 2  /* Reduced from 4 to save memory on constrained devices */
 
 /* Runtime model context */
 typedef struct {

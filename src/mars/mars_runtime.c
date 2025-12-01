@@ -327,7 +327,7 @@ mars_error_t mars_load_memory(const void *data, size_t size, mars_model_t **out_
                 tid, sz, rt->vaddr, rt->paddr);
     }
 
-    /* Allocate output tensors */
+    /* Allocate output tensors - use regular malloc since they only need CPU access */
     for (uint32_t n = 0; n < header.num_outputs; n++) {
         uint32_t tid = header.output_tensor_ids[n];
         if (tid >= header.num_tensors) continue;
@@ -336,8 +336,8 @@ mars_error_t mars_load_memory(const void *data, size_t size, mars_model_t **out_
         if (rt->vaddr != NULL) continue;
 
         size_t sz = ALIGN_UP(tensor_byte_size(&rt->desc), 64);
-        void *paddr = NULL;
-        rt->vaddr = nna_malloc_phys(sz, &paddr);
+        /* Output tensors don't need NNA DMA access, just CPU read */
+        rt->vaddr = aligned_alloc(64, sz);
         if (rt->vaddr == NULL) {
             fprintf(stderr, "Mars: Failed to allocate output tensor %u (%zu bytes)\n", tid, sz);
             /* TODO: cleanup already allocated tensors */
@@ -346,12 +346,36 @@ mars_error_t mars_load_memory(const void *data, size_t size, mars_model_t **out_
             free(model);
             return MARS_ERR_ALLOC_FAILED;
         }
-        rt->paddr = paddr;
+        rt->paddr = NULL;  /* No physical address needed for CPU-only access */
         rt->alloc_size = sz;
-        rt->buffer_idx = -1;
-        fprintf(stderr, "Mars: Output tensor %u: %zu bytes at vaddr=%p paddr=%p\n",
-                tid, sz, rt->vaddr, rt->paddr);
+        rt->buffer_idx = -2;  /* Mark as CPU-only buffer (different from -1 dedicated NNA buffer) */
+        fprintf(stderr, "Mars: Output tensor %u: %zu bytes at vaddr=%p (CPU-only)\n",
+                tid, sz, rt->vaddr);
     }
+
+    /* Allocate working buffers FIRST (before skip tensors) to claim large contiguous blocks */
+    size_t buffer_size = ALIGN_UP(max_intermediate_size, 64);
+    if (buffer_size < 256 * 1024) buffer_size = 256 * 1024;  /* 256KB minimum */
+
+    model->num_work_buffers = MARS_MAX_WORK_BUFFERS;
+    model->work_buffer_size = buffer_size;
+
+    for (uint32_t b = 0; b < model->num_work_buffers; b++) {
+        void *paddr = NULL;
+        model->work_buffers[b] = nna_malloc_phys(buffer_size, &paddr);
+        if (model->work_buffers[b] == NULL) {
+            fprintf(stderr, "Mars: Failed to allocate working buffer %u (%zu bytes)\n", b, buffer_size);
+            /* TODO: cleanup already allocated */
+            free(model->layers);
+            free(model->tensors);
+            free(model);
+            return MARS_ERR_ALLOC_FAILED;
+        }
+        model->work_buffers_paddr[b] = paddr;
+        model->buffer_tensor[b] = -1;  /* Initially free */
+    }
+    fprintf(stderr, "Mars: Allocated %u working buffers of %zu bytes each\n",
+            model->num_work_buffers, buffer_size);
 
     /* Allocate long-lived intermediate tensors (skip connections) */
     uint32_t skip_alloc_count = 0;
@@ -382,30 +406,6 @@ mars_error_t mars_load_memory(const void *data, size_t size, mars_model_t **out_
         }
     }
     fprintf(stderr, "Mars: Allocated %u skip-connection tensors\n", skip_alloc_count);
-
-    /* Allocate working buffers for short-lived tensors */
-    size_t buffer_size = ALIGN_UP(max_intermediate_size, 64);
-    if (buffer_size < 256 * 1024) buffer_size = 256 * 1024;  /* 256KB minimum */
-
-    model->num_work_buffers = MARS_MAX_WORK_BUFFERS;
-    model->work_buffer_size = buffer_size;
-
-    for (uint32_t b = 0; b < model->num_work_buffers; b++) {
-        void *paddr = NULL;
-        model->work_buffers[b] = nna_malloc_phys(buffer_size, &paddr);
-        if (model->work_buffers[b] == NULL) {
-            fprintf(stderr, "Mars: Failed to allocate working buffer %u (%zu bytes)\n", b, buffer_size);
-            /* TODO: cleanup already allocated */
-            free(model->layers);
-            free(model->tensors);
-            free(model);
-            return MARS_ERR_ALLOC_FAILED;
-        }
-        model->work_buffers_paddr[b] = paddr;
-        model->buffer_tensor[b] = -1;  /* Initially free */
-    }
-    fprintf(stderr, "Mars: Allocated %u working buffers of %zu bytes each\n",
-            model->num_work_buffers, buffer_size);
 
     /* Assign weight tensors - these have fixed memory from the weights section */
     for (uint32_t i = 0; i < header.num_tensors; i++) {
@@ -482,15 +482,22 @@ void mars_free(mars_model_t *model) {
         for (uint32_t i = 0; i < model->header.num_tensors; i++) {
             mars_runtime_tensor_t *rt = &model->tensors[i];
             /* buffer_idx == -1 means dedicated buffer via nna_malloc
+             * buffer_idx == -2 means CPU-only buffer via malloc (output tensors)
              * buffer_idx == -3 means runtime dynamic allocation
              * Skip weight tensors (they point into DDR weight section) */
             if (rt->vaddr != NULL && rt->desc.data_size == 0 &&
-                (rt->buffer_idx == -1 || rt->buffer_idx == -3)) {
+                (rt->buffer_idx == -1 || rt->buffer_idx == -2 || rt->buffer_idx == -3)) {
                 /* Don't free if it's part of the weights DDR block */
                 if (model->ddr_base == NULL ||
                     rt->vaddr < model->ddr_base ||
                     (uintptr_t)rt->vaddr >= (uintptr_t)model->ddr_base + model->ddr_size) {
-                    nna_free(rt->vaddr);
+                    if (rt->buffer_idx == -2) {
+                        /* CPU-only buffer allocated with aligned_alloc */
+                        free(rt->vaddr);
+                    } else {
+                        /* NNA buffer allocated with nna_malloc */
+                        nna_free(rt->vaddr);
+                    }
                     rt->vaddr = NULL;
                 }
             }
@@ -1663,6 +1670,58 @@ static mars_error_t execute_batchnorm(mars_model_t *model, mars_runtime_layer_t 
     return MARS_OK;
 }
 
+/* Execute SiLU (Swish): out = x * sigmoid(x) */
+static mars_error_t execute_silu(mars_model_t *model, mars_runtime_layer_t *layer) {
+    const mars_layer_t *desc = &layer->desc;
+
+    mars_runtime_tensor_t *input = get_tensor_by_id(model, desc->input_tensor_ids[0]);
+    mars_runtime_tensor_t *output = get_tensor_by_id(model, desc->output_tensor_ids[0]);
+    if (!input || !output || !input->vaddr || !output->vaddr) {
+        return MARS_ERR_INVALID_TENSOR;
+    }
+
+    /* Calculate number of elements */
+    size_t numel = 1;
+    for (uint32_t i = 0; i < input->desc.ndims; i++) {
+        numel *= input->desc.shape[i];
+    }
+
+    /* Check if float32 model */
+    int is_float = (input->desc.dtype == MARS_DTYPE_FLOAT32);
+
+    if (is_float) {
+        float *in = (float *)input->vaddr;
+        float *out = (float *)output->vaddr;
+        for (size_t i = 0; i < numel; i++) {
+            float x = in[i];
+            float sigmoid_x = 1.0f / (1.0f + expf(-x));
+            out[i] = x * sigmoid_x;
+        }
+        return MARS_OK;
+    }
+
+    /* INT8 path with quantization */
+    int8_t *in = (int8_t *)input->vaddr;
+    int8_t *out = (int8_t *)output->vaddr;
+    float in_scale = input->desc.scale;
+    float out_scale = output->desc.scale > 0 ? output->desc.scale : in_scale;
+
+    for (size_t i = 0; i < numel; i++) {
+        /* Dequantize */
+        float x = in[i] * in_scale;
+        /* SiLU = x * sigmoid(x) */
+        float sigmoid_x = 1.0f / (1.0f + expf(-x));
+        float y = x * sigmoid_x;
+        /* Requantize */
+        int32_t q = (int32_t)(y / out_scale + 0.5f);
+        if (q > 127) q = 127;
+        if (q < -128) q = -128;
+        out[i] = (int8_t)q;
+    }
+
+    return MARS_OK;
+}
+
 /* Layer execution dispatcher */
 static mars_error_t execute_layer(mars_model_t *model, mars_runtime_layer_t *layer) {
     const mars_layer_t *desc = &layer->desc;
@@ -1688,8 +1747,7 @@ static mars_error_t execute_layer(mars_model_t *model, mars_runtime_layer_t *lay
             return execute_relu(model, layer);
 
         case MARS_LAYER_SILU:
-            /* SiLU is implemented as Sigmoid + Mul in ONNX */
-            return MARS_OK;
+            return execute_silu(model, layer);
 
         case MARS_LAYER_SIGMOID:
             return execute_sigmoid(model, layer);
