@@ -246,18 +246,20 @@ int nna_oram_get_stats(size_t *total, size_t *used, size_t *free) {
 }
 
 void nna_cache_flush(void *ptr, size_t size) {
+#ifdef __mips__
     /*
-     * On MIPS, we need to flush the cache before DMA reads.
-     * This is typically done via a syscall or special instruction.
-     * 
-     * For now, this is a placeholder. Real implementation would use:
-     * - cacheflush() syscall on MIPS
-     * - Or direct cache instructions
+     * MIPS cacheflush syscall: flush data cache for region
+     * DCACHE = 1 (data cache), ICACHE = 0 (instruction cache), BCACHE = 3 (both)
+     * We need data cache flush to push writes to memory
      */
+    extern int cacheflush(char *addr, int nbytes, int cache);
+    #define DCACHE 1
+    cacheflush((char *)ptr, (int)size, DCACHE);
+#else
+    /* No-op on other platforms */
     (void)ptr;
     (void)size;
-    
-    /* TODO: Implement MIPS cache flush */
+#endif
 }
 
 void nna_cache_invalidate(void *ptr, size_t size) {

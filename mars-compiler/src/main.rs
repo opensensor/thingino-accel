@@ -458,10 +458,20 @@ impl MarsCompiler {
     }
     
     fn mark_outputs(&mut self) -> Result<()> {
+        if self.verbose {
+            println!("Marking {} outputs:", self.onnx.outputs.len());
+        }
         for output in &self.onnx.outputs {
+            if self.verbose {
+                println!("  Checking output: '{}'", output.name);
+            }
             if let Some(&id) = self.tensor_map.get(&output.name) {
                 if self.verbose {
-                    println!("Output tensor {}: {}", id, output.name);
+                    println!("    -> Found as tensor {}", id);
+                }
+            } else {
+                if self.verbose {
+                    println!("    -> NOT FOUND in tensor_map");
                 }
             }
         }
@@ -499,6 +509,75 @@ impl MarsCompiler {
     fn get_or_create_tensor(&mut self, name: &str) -> u32 {
         if let Some(&id) = self.tensor_map.get(name) {
             return id;
+        }
+
+        // For QDQ models: if this tensor is a QuantizeLinear/DequantizeLinear output,
+        // try to find an existing tensor to alias to.
+        if self.has_qdq {
+            // Strip QDQ suffixes to find base name
+            let base_name = name.trim_end_matches("_DequantizeLinear_Output")
+                                .trim_end_matches("_QuantizeLinear_Output")
+                                .trim_end_matches("_QuantizeLinear_Input");
+
+            // Check if base_name already has a tensor (from Reshape aliasing, etc.)
+            if base_name != name {
+                if let Some(&base_id) = self.tensor_map.get(base_name) {
+                    // Alias this QDQ output to the existing tensor
+                    self.tensor_map.insert(name.to_string(), base_id);
+                    if self.verbose {
+                        println!("  QDQ alias: {} -> {} (tensor {})", name, base_name, base_id);
+                    }
+                    return base_id;
+                }
+            }
+
+            // Check if base_name is a model input
+            for input in &self.onnx.inputs {
+                if input.name == base_name {
+                    // This QDQ tensor aliases the model input - create tensor for the input
+                    // if it doesn't exist, then map this name to it too
+                    let input_id = if let Some(&id) = self.tensor_map.get(&input.name) {
+                        id
+                    } else {
+                        // Create the input tensor first
+                        let id = self.tensors.len() as u32;
+                        let mut tensor = MarsTensor::new(id, &input.name);
+                        tensor.dtype = if self.quantize { DataType::Int8 } else { DataType::Float32 };
+                        tensor.format = if self.use_nhwc { DataFormat::Nhwc } else { DataFormat::Nchw };
+
+                        // Get shape
+                        if let Some(dims) = self.onnx.shape_info.get(&input.name) {
+                            tensor.ndims = dims.len() as u32;
+                            if self.use_nhwc && dims.len() == 4 {
+                                tensor.shape[0] = dims[0].max(1) as i32;
+                                tensor.shape[1] = dims[2].max(1) as i32;
+                                tensor.shape[2] = dims[3].max(1) as i32;
+                                tensor.shape[3] = dims[1].max(1) as i32;
+                            } else {
+                                for (i, &dim) in dims.iter().enumerate() {
+                                    if i < 4 { tensor.shape[i] = dim.max(1) as i32; }
+                                }
+                            }
+                        }
+
+                        // Get scale from QDQ
+                        if let Some(scale) = self.get_qdq_scale(&input.name) {
+                            tensor.scale = scale;
+                        }
+
+                        self.tensors.push(tensor);
+                        self.tensor_map.insert(input.name.clone(), id);
+                        id
+                    };
+
+                    // Map this QDQ name to the same input tensor
+                    self.tensor_map.insert(name.to_string(), input_id);
+                    if self.verbose {
+                        println!("  QDQ alias: {} -> {} (tensor {})", name, input.name, input_id);
+                    }
+                    return input_id;
+                }
+            }
         }
 
         let id = self.tensors.len() as u32;
@@ -783,15 +862,35 @@ impl MarsCompiler {
 
         // Handle bias if present
         let bias_id = if let Some(bias_name) = node.inputs.get(2) {
-            if let Some(bias_tensor) = self.onnx.initializers.get(bias_name) {
-                // Clone bias data to avoid borrow conflict
-                let bias_data = bias_tensor.data.clone();
-                // Bias stored as float32 in both modes
+            // Try direct lookup first (for non-QDQ models)
+            let bias_result = if let Some(bias_tensor) = self.onnx.initializers.get(bias_name) {
+                Some((bias_tensor.data.clone(), DataType::Float32))
+            } else if self.quantize {
+                // For QDQ models, bias input is the output of DequantizeLinear
+                // The actual quantized bias is stored as {bias_name}_quantized
+                // But the bias name might be like "model.0.conv.bias" and we need
+                // to find "model.0.conv.bias_quantized"
+                let quant_name = format!("{}_quantized", bias_name);
+                if let Some(quant_tensor) = self.onnx.initializers.get(&quant_name) {
+                    if self.verbose && layer_id < 3 {
+                        println!("  Found QDQ quantized bias: {} (dtype={:?})",
+                                 quant_name, quant_tensor.data_type);
+                    }
+                    // QDQ bias is INT32, store as INT32
+                    Some((quant_tensor.data.clone(), DataType::Int32))
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            if let Some((bias_data, dtype)) = bias_result {
                 let (bias_offset, bias_size) = self.add_weights(&bias_data);
 
                 let bid = self.tensors.len() as u32;
                 let mut b_tensor = MarsTensor::new(bid, bias_name);
-                b_tensor.dtype = DataType::Float32;  // Bias always float32
+                b_tensor.dtype = dtype;
                 b_tensor.ndims = 1;
                 b_tensor.shape[0] = out_ch as i32;
                 b_tensor.data_offset = bias_offset;
@@ -1193,15 +1292,51 @@ impl MarsCompiler {
         let mut axis = if raw_axis < 0 { (4 + raw_axis) as u32 } else { raw_axis as u32 };
         axis = axis.min(3);  // Clamp to valid range
 
+        // Check if first input is a 4D tensor - only do NHWC remapping for 4D
+        // First try the input tensor, then check the output shape
+        let output_ndims = if let Some(output_name) = node.outputs.get(0) {
+            // Try the output shape first
+            if let Some(dims) = self.onnx.shape_info.get(output_name) {
+                dims.len()
+            } else {
+                // Try without QDQ suffix
+                let base = output_name.trim_end_matches("_DequantizeLinear_Output")
+                                      .trim_end_matches("_QuantizeLinear_Input");
+                if let Some(dims) = self.onnx.shape_info.get(base) {
+                    dims.len()
+                } else {
+                    4
+                }
+            }
+        } else {
+            4
+        };
+
+        let first_input_ndims = if let Some(first_input) = node.inputs.get(0) {
+            if let Some(dims) = self.onnx.shape_info.get(first_input) {
+                dims.len()
+            } else {
+                output_ndims  // Use output ndims if input is unknown
+            }
+        } else {
+            output_ndims
+        };
+
         // Adjust axis for NHWC format: NCHW axis 1 (C) -> NHWC axis 3
-        // NCHW [N,C,H,W] vs NHWC [N,H,W,C]
-        if self.use_nhwc && axis > 0 {
+        // But only for 4D tensors - 3D tensors don't need remapping
+        if self.use_nhwc && axis > 0 && first_input_ndims == 4 {
             axis = match axis {
                 1 => 3,  // C dimension: NCHW[1] -> NHWC[3]
                 2 => 1,  // H dimension: NCHW[2] -> NHWC[1]
                 3 => 2,  // W dimension: NCHW[3] -> NHWC[2]
                 _ => axis,
             };
+        }
+
+        if self.verbose {
+            println!("Concat[{}]: {} inputs, ndims={}, axis={} (raw={}), output={}",
+                     layer_id, node.inputs.len(), first_input_ndims, axis, raw_axis,
+                     node.outputs.get(0).map(|s| s.as_str()).unwrap_or("?"));
         }
 
         let mut layer = MarsLayer::new(layer_id, LayerType::Concat);
@@ -1324,56 +1459,68 @@ impl MarsCompiler {
     }
 
     fn process_reshape(&mut self, node: &OnnxNode) -> Result<()> {
-        let layer_id = self.layers.len() as u32;
-
         let input_name = node.inputs.get(0).context("Reshape missing input")?;
         let input_id = self.get_or_create_tensor(input_name);
 
         let output_name = node.outputs.get(0).context("Reshape missing output")?;
-        let output_id = self.get_or_create_tensor(output_name);
 
-        // Get target shape from the second input (constant)
-        let mut target_shape = [0i32; 6];
-        let mut ndims = 4u32;
-        if let Some(shape_name) = node.inputs.get(1) {
-            if let Some(shape_data) = self.onnx.initializers.get(shape_name) {
-                // Shape is stored as int64
-                let dims: Vec<i64> = shape_data.data.chunks_exact(8)
-                    .map(|b| i64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]))
-                    .collect();
-                ndims = dims.len().min(6) as u32;
-                for (i, &d) in dims.iter().take(6).enumerate() {
-                    target_shape[i] = d as i32;
+        // For final Reshapes that produce 3D output [1, N, 85], create a NEW tensor
+        // with the correct shape instead of aliasing. This avoids corrupting upstream shapes.
+        if let Some(dims) = self.onnx.shape_info.get(output_name) {
+            // Check if this is a final reshape (3D output with dim[2]=85)
+            if dims.len() == 3 && dims[2] == 85 {
+                // Create a new tensor for this output
+                let output_id = self.tensors.len() as u32;
+                let mut tensor = MarsTensor::new(output_id, output_name);
+                tensor.dtype = if self.quantize { DataType::Int8 } else { DataType::Float32 };
+                tensor.format = if self.use_nhwc { DataFormat::Nhwc } else { DataFormat::Nchw };
+                tensor.ndims = dims.len() as u32;
+                for i in 0..4 {
+                    tensor.shape[i] = if i < dims.len() { dims[i].max(1) as i32 } else { 0 };
                 }
+
+                // Get scale from input tensor
+                if let Some(input_tensor) = self.tensors.get(input_id as usize) {
+                    tensor.scale = input_tensor.scale;
+                }
+
+                self.tensors.push(tensor);
+                self.tensor_map.insert(output_name.clone(), output_id);
+
+                // Create a Reshape layer to copy/reinterpret the data
+                let layer_id = self.layers.len() as u32;
+                let mut layer = MarsLayer::new(layer_id, LayerType::Reshape);
+                layer.input_tensor_ids[0] = input_id;
+                layer.num_inputs = 1;
+                layer.output_tensor_ids[0] = output_id;
+                layer.num_outputs = 1;
+
+                // Store target shape in reshape params
+                let mut reshape_params = ReshapeParams::default();
+                reshape_params.target_shape[0] = dims[0] as i32;
+                reshape_params.target_shape[1] = dims[1] as i32;
+                reshape_params.target_shape[2] = dims[2] as i32;
+                reshape_params.ndims = 3;
+                layer.params = LayerParams::Reshape(reshape_params);
+
+                self.layers.push(layer);
+
+                if self.verbose {
+                    println!("  Reshape layer: {} (tensor {}) -> {} (tensor {}), shape: {:?}",
+                             input_name, input_id, output_name, output_id, &dims[..]);
+                }
+                return Ok(());
             }
         }
 
-        // Update output tensor shape
-        let mut out_shape = [1i32; 4];
-        for i in 0..4.min(ndims as usize) {
-            out_shape[i] = target_shape[i];
-        }
-        self.update_tensor_shape(output_id, &out_shape);
+        // For other Reshapes, just alias (shape reinterpretation with no data copy)
+        self.tensor_map.insert(output_name.clone(), input_id);
 
-        // Reshape preserves scale
-        if self.quantize {
-            let in_scale = self.get_tensor_scale(input_id);
-            self.set_tensor_scale(output_id, in_scale);
+        if self.verbose {
+            println!("  Reshape alias: {} -> {} (tensor {})", output_name, input_name, input_id);
         }
 
-        let mut layer = MarsLayer::new(layer_id, LayerType::Reshape);
-        layer.num_inputs = 1;
-        layer.num_outputs = 1;
-        layer.input_tensor_ids[0] = input_id;
-        layer.output_tensor_ids[0] = output_id;
-
-        // Store target shape in params (use generic params)
-        layer.params = LayerParams::Reshape(ReshapeParams {
-            target_shape,
-            ndims,
-        });
-
-        self.layers.push(layer);
+        // No layer needed - reshape is pure aliasing, handled at compile time
         Ok(())
     }
 
@@ -1482,24 +1629,39 @@ impl MarsCompiler {
             }
         }
         for (i, output) in self.onnx.outputs.iter().take(4).enumerate() {
-            if let Some(&id) = self.tensor_map.get(&output.name) {
-                header.output_tensor_ids[i] = id;
-                if self.verbose {
-                    println!("Output {}: {} -> tensor_id {}", i, output.name, id);
-                }
-            } else {
-                // Try to find the tensor with a suffix (QDQ models add _QuantizeLinear_Input)
-                let alt_name = format!("{}_QuantizeLinear_Input", output.name);
-                if let Some(&id) = self.tensor_map.get(&alt_name) {
+            if self.verbose {
+                println!("  Looking for output {}: '{}'", i, output.name);
+            }
+
+            // Try multiple name variations for QDQ models
+            let name_variations = [
+                output.name.clone(),
+                // Strip _QuantizeLinear_Output suffix (for outputs that are QuantizeLinear outputs)
+                output.name.trim_end_matches("_QuantizeLinear_Output").to_string(),
+                // Add _QuantizeLinear_Input suffix (for outputs that need quantization)
+                format!("{}_QuantizeLinear_Input", output.name),
+            ];
+
+            let mut found = false;
+            for alt_name in &name_variations {
+                if let Some(&id) = self.tensor_map.get(alt_name) {
                     header.output_tensor_ids[i] = id;
                     if self.verbose {
                         let scale = self.tensors.get(id as usize).map(|t| t.scale).unwrap_or(1.0);
-                        println!("Output {}: {} (via {}) -> tensor_id {} (scale={})",
-                                 i, output.name, alt_name, id, scale);
+                        if alt_name == &output.name {
+                            println!("Output {}: {} -> tensor_id {} (scale={})", i, output.name, id, scale);
+                        } else {
+                            println!("Output {}: {} (via '{}') -> tensor_id {} (scale={})",
+                                     i, output.name, alt_name, id, scale);
+                        }
                     }
-                } else {
-                    eprintln!("Warning: Output tensor {} not found in tensor_map", output.name);
+                    found = true;
+                    break;
                 }
+            }
+
+            if !found {
+                eprintln!("Warning: Output tensor {} not found in tensor_map", output.name);
             }
         }
 

@@ -275,23 +275,78 @@ mars_error_t mars_load_memory(const void *data, size_t size, mars_model_t **out_
     fprintf(stderr, "Mars: Max tensor size: %zu, DDR remaining: %zu\n",
             max_tensor_size, ddr_remaining);
 
+    /*
+     * Calculate I/O buffer needs first (for input, output, and final concat input tensors).
+     * These need dedicated memory that won't be overwritten.
+     */
+    size_t io_buffer_needed = 0;
+    for (uint32_t n = 0; n < header.num_inputs; n++) {
+        uint32_t tid = header.input_tensor_ids[n];
+        if (tid >= header.num_tensors) continue;
+        mars_runtime_tensor_t *rt = &model->tensors[tid];
+        if (rt->desc.data_size > 0) continue;
+        io_buffer_needed += ALIGN_UP(tensor_byte_size(&rt->desc), 64);
+    }
+    for (uint32_t n = 0; n < header.num_outputs; n++) {
+        uint32_t tid = header.output_tensor_ids[n];
+        if (tid >= header.num_tensors) continue;
+        /* Check if output is same as any input */
+        int is_input = 0;
+        for (uint32_t m = 0; m < header.num_inputs; m++) {
+            if (header.input_tensor_ids[m] == tid) { is_input = 1; break; }
+        }
+        if (is_input) continue;
+        mars_runtime_tensor_t *rt = &model->tensors[tid];
+        if (rt->desc.data_size > 0) continue;
+        io_buffer_needed += ALIGN_UP(tensor_byte_size(&rt->desc), 64);
+    }
+    /* Also account for final Concat input tensors (they need dedicated buffers) */
+    for (uint32_t i = 0; i < header.num_layers; i++) {
+        mars_layer_t *layer = &model->layers[i].desc;
+        if (layer->type == MARS_LAYER_CONCAT) {
+            for (uint32_t j = 0; j < layer->num_outputs; j++) {
+                uint32_t out_tid = layer->output_tensor_ids[j];
+                int is_model_output = 0;
+                for (uint32_t k = 0; k < header.num_outputs; k++) {
+                    if (header.output_tensor_ids[k] == out_tid) {
+                        is_model_output = 1;
+                        break;
+                    }
+                }
+                if (is_model_output) {
+                    for (uint32_t inp = 0; inp < layer->num_inputs; inp++) {
+                        uint32_t in_tid = layer->input_tensor_ids[inp];
+                        if (in_tid >= header.num_tensors) continue;
+                        mars_runtime_tensor_t *rt = &model->tensors[in_tid];
+                        if (rt->desc.data_size > 0) continue;
+                        io_buffer_needed += ALIGN_UP(tensor_byte_size(&rt->desc), 64);
+                    }
+                }
+            }
+        }
+    }
+    fprintf(stderr, "Mars: I/O tensors need %zu bytes\n", io_buffer_needed);
+
+    /* Reserve space for I/O tensors, then allocate working buffers from remainder */
+    size_t work_ddr_remaining = ddr_remaining - io_buffer_needed;
+
     /* Try 3 buffers first */
-    if (total_buffer > ddr_remaining) {
+    if (total_buffer > work_ddr_remaining) {
         fprintf(stderr, "Mars: 3 buffers too large (%zu > %zu), trying 2\n",
-                total_buffer, ddr_remaining);
+                total_buffer, work_ddr_remaining);
         num_buffers = 2;
         total_buffer = buffer_size * num_buffers;
     }
 
     /* Try 2 buffers */
-    if (total_buffer > ddr_remaining) {
+    if (total_buffer > work_ddr_remaining) {
         /* Calculate max buffer size that fits */
-        buffer_size = (ddr_remaining / 2) & ~63UL;  /* 64-byte aligned */
+        buffer_size = (work_ddr_remaining / 2) & ~63UL;  /* 64-byte aligned */
         total_buffer = buffer_size * 2;
 
         if (buffer_size < 65536) {  /* Minimum 64KB per buffer */
             fprintf(stderr, "Mars: Out of DDR memory (need 2x%zu, have %zu)\n",
-                    max_tensor_size, ddr_remaining);
+                    max_tensor_size, work_ddr_remaining);
             free(model->layers);
             free(model->tensors);
             free(model);
@@ -312,10 +367,99 @@ mars_error_t mars_load_memory(const void *data, size_t size, mars_model_t **out_
         work_buffers[b] = ddr_ptr + b * buffer_size;
     }
 
-    /* Assign tensors to working buffers in round-robin */
+    /*
+     * Allocate dedicated buffers for input/output tensors after working buffers.
+     * This ensures inputs/outputs don't get overwritten during computation.
+     */
+    uint8_t *io_buffer_ptr = ddr_ptr + total_buffer;
+    size_t io_buffer_used = 0;
+
+    /* First pass: allocate input tensors */
+    for (uint32_t n = 0; n < header.num_inputs; n++) {
+        uint32_t tid = header.input_tensor_ids[n];
+        if (tid >= header.num_tensors) continue;
+        mars_runtime_tensor_t *rt = &model->tensors[tid];
+        if (rt->desc.data_size > 0) continue;
+
+        size_t sz = ALIGN_UP(tensor_byte_size(&rt->desc), 64);
+        rt->vaddr = io_buffer_ptr + io_buffer_used;
+        rt->paddr = (void *)((uint8_t *)model->ddr_paddr +
+                             ((uint8_t *)rt->vaddr - (uint8_t *)model->ddr_base));
+        rt->alloc_size = sz;
+        io_buffer_used += sz;
+        fprintf(stderr, "Mars: Input tensor %u allocated at %p (size=%zu)\n", tid, rt->vaddr, sz);
+    }
+
+    /* Second pass: allocate output tensors (skip if same as input) */
+    for (uint32_t n = 0; n < header.num_outputs; n++) {
+        uint32_t tid = header.output_tensor_ids[n];
+        if (tid >= header.num_tensors) continue;
+        mars_runtime_tensor_t *rt = &model->tensors[tid];
+        if (rt->desc.data_size > 0) continue;
+        if (rt->vaddr != NULL) continue;  /* Already allocated as input */
+
+        size_t sz = ALIGN_UP(tensor_byte_size(&rt->desc), 64);
+        rt->vaddr = io_buffer_ptr + io_buffer_used;
+        rt->paddr = (void *)((uint8_t *)model->ddr_paddr +
+                             ((uint8_t *)rt->vaddr - (uint8_t *)model->ddr_base));
+        rt->alloc_size = sz;
+        io_buffer_used += sz;
+        fprintf(stderr, "Mars: Output tensor %u allocated at %p (size=%zu)\n", tid, rt->vaddr, sz);
+    }
+
+    fprintf(stderr, "Mars: Allocated %zu bytes for I/O tensors\n", io_buffer_used);
+
+    /* Find and allocate tensors that are inputs to the final Concat (output-producing layer).
+     * These tensors need dedicated buffers to avoid being overwritten before the Concat runs. */
+    for (uint32_t i = 0; i < header.num_layers; i++) {
+        mars_layer_t *layer = &model->layers[i].desc;
+
+        /* Check if this layer produces an output tensor */
+        if (layer->type == MARS_LAYER_CONCAT) {
+            for (uint32_t j = 0; j < layer->num_outputs; j++) {
+                uint32_t out_tid = layer->output_tensor_ids[j];
+
+                /* Is this output one of the model outputs? */
+                int is_model_output = 0;
+                for (uint32_t k = 0; k < header.num_outputs; k++) {
+                    if (header.output_tensor_ids[k] == out_tid) {
+                        is_model_output = 1;
+                        break;
+                    }
+                }
+
+                if (is_model_output) {
+                    /* This Concat produces model output - allocate its inputs separately */
+                    fprintf(stderr, "Mars: Final Concat layer %u produces output tensor %u\n", i, out_tid);
+                    for (uint32_t inp = 0; inp < layer->num_inputs; inp++) {
+                        uint32_t in_tid = layer->input_tensor_ids[inp];
+                        if (in_tid >= header.num_tensors) continue;
+
+                        mars_runtime_tensor_t *rt = &model->tensors[in_tid];
+                        if (rt->vaddr != NULL) continue;  /* Already allocated */
+                        if (rt->desc.data_size > 0) continue;  /* Weight tensor */
+
+                        size_t sz = ALIGN_UP(tensor_byte_size(&rt->desc), 64);
+                        rt->vaddr = io_buffer_ptr + io_buffer_used;
+                        rt->paddr = (void *)((uint8_t *)model->ddr_paddr +
+                                             ((uint8_t *)rt->vaddr - (uint8_t *)model->ddr_base));
+                        rt->alloc_size = sz;
+                        io_buffer_used += sz;
+                        fprintf(stderr, "Mars: Final Concat input tensor %u allocated at %p (size=%zu)\n",
+                                in_tid, rt->vaddr, sz);
+                    }
+                }
+            }
+        }
+    }
+
+    /* Third pass: assign remaining tensors to working buffers in round-robin */
     uint32_t buf_idx = 0;
     for (uint32_t i = 0; i < header.num_tensors; i++) {
         mars_runtime_tensor_t *rt = &model->tensors[i];
+
+        /* Skip if already allocated (weights, inputs, outputs, final concat inputs) */
+        if (rt->vaddr != NULL) continue;
 
         /* Check if tensor has weight data (data_size > 0 means it's stored in weights section) */
         if (rt->desc.data_size > 0) {
@@ -588,13 +732,17 @@ static mars_error_t execute_conv2d(mars_model_t *model, mars_runtime_layer_t *la
         out_w = output->desc.shape[3];
     }
 
-    /* Calculate padding for SAME mode */
+    /* Calculate padding based on mode */
     int pad_top = 0, pad_left = 0;
     if (params->padding == MARS_PAD_SAME) {
         int pad_h = (out_h - 1) * params->stride_h + params->kernel_h - in_h;
         int pad_w = (out_w - 1) * params->stride_w + params->kernel_w - in_w;
         pad_top = pad_h / 2;
         pad_left = pad_w / 2;
+    } else if (params->padding == MARS_PAD_EXPLICIT) {
+        /* Use explicit padding values from the model */
+        pad_top = params->pad_top;
+        pad_left = params->pad_left;
     }
 
     /* Check if float32 model */
@@ -639,6 +787,34 @@ static mars_error_t execute_conv2d(mars_model_t *model, mars_runtime_layer_t *la
         );
     } else if (is_nhwc) {
         /* INT8 NHWC MXU-accelerated convolution - faster gather */
+
+        /* Debug: print first layer info */
+        static int first_conv = 1;
+        if (first_conv) {
+            printf("  [DEBUG Conv0] Input tensor id=%u, vaddr=%p\n", input->desc.id, input->vaddr);
+            printf("  [DEBUG Conv0] Input first 16 bytes: ");
+            int8_t *in_ptr = (int8_t *)input->vaddr;
+            for (int i = 0; i < 16; i++) printf("%d ", in_ptr[i]);
+            printf("\n");
+
+            printf("  [DEBUG Conv0] Weight first 16 bytes: ");
+            int8_t *w_ptr = (int8_t *)weight->vaddr;
+            for (int i = 0; i < 16; i++) printf("%d ", w_ptr[i]);
+            printf("\n");
+
+            if (bias) {
+                printf("  [DEBUG Conv0] Bias first 16 int32: ");
+                int32_t *b_ptr = (int32_t *)bias->vaddr;
+                for (int i = 0; i < 16; i++) printf("%d ", b_ptr[i]);
+                printf("\n");
+            } else {
+                printf("  [DEBUG Conv0] No bias\n");
+            }
+
+            printf("  [DEBUG Conv0] Starting NHWC conv...\n");
+            fflush(stdout);
+        }
+
         conv2d_int8_nhwc_mxu(
             (int8_t *)input->vaddr, in_h, in_w, in_c,
             (int8_t *)weight->vaddr, out_c, params->kernel_h, params->kernel_w,
@@ -648,6 +824,25 @@ static mars_error_t execute_conv2d(mars_model_t *model, mars_runtime_layer_t *la
             pad_top, pad_left,
             input->desc.scale, weight->desc.scale, output->desc.scale
         );
+
+        /* Debug: print layer outputs periodically */
+        if (first_conv) {
+            printf("  [DEBUG Conv0] Output first 16 bytes: ");
+            int8_t *out_ptr = (int8_t *)output->vaddr;
+            for (int i = 0; i < 16; i++) printf("%d ", out_ptr[i]);
+            printf("\n");
+            first_conv = 0;
+        }
+
+        /* Debug: also print last few conv outputs */
+        static int conv_idx = 0;
+        conv_idx++;
+        if (conv_idx >= 55 && conv_idx <= 60) {  /* Last few convs */
+            printf("  [DEBUG Conv%d] Output first 16 bytes: ", conv_idx);
+            int8_t *out_ptr = (int8_t *)output->vaddr;
+            for (int i = 0; i < 16; i++) printf("%d ", out_ptr[i]);
+            printf("\n");
+        }
     } else {
         /* INT8 NCHW MXU-accelerated convolution */
         conv2d_int8_mxu(
@@ -959,41 +1154,256 @@ static mars_error_t execute_maxpool(mars_model_t *model, mars_runtime_layer_t *l
     return MARS_OK;
 }
 
-/* Execute Concat along channel axis */
+/* Execute Concat - generic implementation for any axis */
 static mars_error_t execute_concat(mars_model_t *model, mars_runtime_layer_t *layer) {
     const mars_layer_t *desc = &layer->desc;
+    const mars_concat_params_t *params = &desc->params.concat;
 
     mars_runtime_tensor_t *output = get_tensor_by_id(model, desc->output_tensor_ids[0]);
     if (!output || !output->vaddr) {
         return MARS_ERR_INVALID_TENSOR;
     }
 
-    /* Assuming NHWC and concat along channel axis (axis=3 or -1) */
-    int out_h = output->desc.shape[1];
-    int out_w = output->desc.shape[2];
     int8_t *out = (int8_t *)output->vaddr;
+    uint32_t axis = params->axis;
 
-    int channel_offset = 0;
+    /* Debug: print Concat info for the final output Concat (axis=1, 3 inputs, large output) */
+    int32_t out_shape1 = output->desc.shape[1];
+    if (axis == 1 && desc->num_inputs == 3 && out_shape1 > 20000) {
+        fprintf(stderr, "  [DEBUG] Final Concat: axis=%u, num_inputs=%u, output_id=%u\n",
+                axis, desc->num_inputs, desc->output_tensor_ids[0]);
+        for (uint32_t n = 0; n < desc->num_inputs; n++) {
+            mars_runtime_tensor_t *inp = get_tensor_by_id(model, desc->input_tensor_ids[n]);
+            if (inp && inp->vaddr) {
+                int8_t *data = (int8_t *)inp->vaddr;
+                fprintf(stderr, "    Input[%u] id=%u shape=[%d,%d,%d,%d] first16: ",
+                        n, desc->input_tensor_ids[n],
+                        inp->desc.shape[0], inp->desc.shape[1],
+                        inp->desc.shape[2], inp->desc.shape[3]);
+                for (int i = 0; i < 16; i++) fprintf(stderr, "%d ", data[i]);
+                fprintf(stderr, "\n");
+            }
+        }
+    }
+
+    /*
+     * Generic concat: for each input, copy data at the right offset along the axis.
+     * For axis=N, we need to interleave data from different inputs along that axis.
+     *
+     * Optimization: if axis is the last non-trivial dimension, we can do sequential copies.
+     */
+
+    /* Get output dimensions */
+    int32_t out_shape[4];
+    for (int i = 0; i < 4; i++) {
+        out_shape[i] = output->desc.shape[i] > 0 ? output->desc.shape[i] : 1;
+    }
+
+    /* Calculate stride for the axis dimension */
+    int64_t axis_stride = 1;
+    for (uint32_t i = axis + 1; i < 4; i++) {
+        axis_stride *= out_shape[i];
+    }
+
+    /* Calculate stride for dimensions before axis */
+    int64_t outer_count = 1;
+    for (uint32_t i = 0; i < axis; i++) {
+        outer_count *= out_shape[i];
+    }
+
+    /* For each input, calculate where it goes in the output */
+    int32_t axis_offset = 0;
 
     for (uint32_t n = 0; n < desc->num_inputs; n++) {
         mars_runtime_tensor_t *input = get_tensor_by_id(model, desc->input_tensor_ids[n]);
         if (!input || !input->vaddr) continue;
 
-        int in_c = input->desc.shape[3];
         int8_t *in = (int8_t *)input->vaddr;
-        int out_c = output->desc.shape[3];
 
-        /* Copy each channel slice */
-        for (int h = 0; h < out_h; h++) {
-            for (int w = 0; w < out_w; w++) {
-                for (int c = 0; c < in_c; c++) {
-                    int in_idx = h * out_w * in_c + w * in_c + c;
-                    int out_idx = h * out_w * out_c + w * out_c + (channel_offset + c);
-                    out[out_idx] = in[in_idx];
-                }
+        /* Get input shape */
+        int32_t in_shape[4];
+        for (int i = 0; i < 4; i++) {
+            in_shape[i] = input->desc.shape[i] > 0 ? input->desc.shape[i] : 1;
+        }
+
+        int32_t in_axis_size = in_shape[axis];
+
+        /* Calculate input element count */
+        int64_t in_axis_stride = 1;
+        for (uint32_t i = axis + 1; i < 4; i++) {
+            in_axis_stride *= in_shape[i];
+        }
+
+        /* Copy data */
+        /* For each position in the outer dimensions */
+        for (int64_t outer = 0; outer < outer_count; outer++) {
+            /* For each position along the axis in this input */
+            for (int32_t a = 0; a < in_axis_size; a++) {
+                /* Copy the inner slice */
+                int64_t in_offset = outer * (in_axis_size * in_axis_stride) + a * in_axis_stride;
+                int64_t out_offset = outer * (out_shape[axis] * axis_stride) + (axis_offset + a) * axis_stride;
+
+                memcpy(out + out_offset, in + in_offset, axis_stride);
             }
         }
-        channel_offset += in_c;
+
+        axis_offset += in_axis_size;
+    }
+
+    return MARS_OK;
+}
+
+/* Execute Reshape: copy data to output with new shape interpretation */
+static mars_error_t execute_reshape(mars_model_t *model, mars_runtime_layer_t *layer) {
+    const mars_layer_t *desc = &layer->desc;
+
+    mars_runtime_tensor_t *input = get_tensor_by_id(model, desc->input_tensor_ids[0]);
+    mars_runtime_tensor_t *output = get_tensor_by_id(model, desc->output_tensor_ids[0]);
+
+    if (!input || !output || !input->vaddr || !output->vaddr) {
+        return MARS_ERR_INVALID_TENSOR;
+    }
+
+    /* Calculate output size - use this as the copy size since input may have
+     * truncated shape (5D stored as 4D loses a dimension) */
+    size_t output_size = 1;
+    for (int i = 0; i < 4; i++) {
+        if (output->desc.shape[i] > 0) {
+            output_size *= output->desc.shape[i];
+        }
+    }
+
+    /* Use output size as copy size - the input buffer should have this much data
+     * even if its stored shape is truncated */
+    size_t copy_size = output_size;
+
+    printf("  [DEBUG Reshape] in_id=%u vaddr=%p -> out_id=%u vaddr=%p copy_size=%zu\n",
+           desc->input_tensor_ids[0], input->vaddr,
+           desc->output_tensor_ids[0], output->vaddr, copy_size);
+    printf("    Input shape: [%d,%d,%d,%d], Output shape: [%d,%d,%d,%d]\n",
+           input->desc.shape[0], input->desc.shape[1], input->desc.shape[2], input->desc.shape[3],
+           output->desc.shape[0], output->desc.shape[1], output->desc.shape[2], output->desc.shape[3]);
+    int8_t *in8 = (int8_t*)input->vaddr;
+    printf("    Input first 16: ");
+    for (int i = 0; i < 16; i++) printf("%d ", in8[i]);
+    printf("\n");
+
+    /* Simple memcpy - reshape is just reinterpretation */
+    memcpy(output->vaddr, input->vaddr, copy_size);
+
+    return MARS_OK;
+}
+
+/* Execute Transpose: permute dimensions */
+static mars_error_t execute_transpose(mars_model_t *model, mars_runtime_layer_t *layer) {
+    const mars_layer_t *desc = &layer->desc;
+    const mars_transpose_params_t *params = &desc->params.transpose;
+
+    mars_runtime_tensor_t *input = get_tensor_by_id(model, desc->input_tensor_ids[0]);
+    mars_runtime_tensor_t *output = get_tensor_by_id(model, desc->output_tensor_ids[0]);
+
+    if (!input || !output || !input->vaddr || !output->vaddr) {
+        return MARS_ERR_INVALID_TENSOR;
+    }
+
+    uint32_t ndims = params->ndims;
+    if (ndims > 6) ndims = 6;
+
+    /* Get input shape and compute strides */
+    int32_t in_shape[6] = {1, 1, 1, 1, 1, 1};
+    int32_t in_stride[6] = {1, 1, 1, 1, 1, 1};
+    int32_t total = 1;
+
+    /* Copy input shape - use raw shape data for high-dim tensors */
+    for (uint32_t i = 0; i < ndims; i++) {
+        /* For tensors with ndims > 4, the shape may be packed differently */
+        /* Check if there's shape info in the raw params or use output shape */
+        if (i < 4) {
+            in_shape[i] = input->desc.shape[i];
+        } else {
+            /* For dims 4+, we need to get from reshape context */
+            /* YOLOv5: [1, 3, 85, H, W] - dims 3,4 come from spatial dims */
+            in_shape[i] = 1;  /* Will be overwritten from context */
+        }
+    }
+
+    /* YOLOv5 specific: perm=[0,1,3,4,2] on [1, 3, 85, H, W]
+     * Since we store tensors as 4D max in mars_tensor_t, we need special handling
+     * For YOLOv5 head outputs: the Conv produces [H, W, 255] in NHWC
+     * After reshape [1, 3, 85, H, W] -> transpose [0,1,3,4,2] -> [1, 3, H, W, 85]
+     *
+     * But due to reshape aliasing, the actual data layout is still [H, W, 255]
+     * and we need to reorganize to [H, W, 3, 85] for proper anchor/class interleaving
+     */
+
+    /* Get tensor sizes */
+    size_t in_size = 1;
+    for (uint32_t i = 0; i < input->desc.ndims && i < 4; i++) {
+        if (input->desc.shape[i] > 0)
+            in_size *= input->desc.shape[i];
+    }
+
+    int8_t *src = (int8_t *)input->vaddr;
+    int8_t *dst = (int8_t *)output->vaddr;
+
+    /* For 5D transpose perm=[0,1,3,4,2] on [1, 3, 85, H, W]:
+     * This transposes the last 3 dims: [85, H, W] -> [H, W, 85]
+     * In our NHWC layout with reshape aliasing, the tensor is [H, W, 255]
+     * where 255 = 3 * 85 (3 anchors, 85 values per anchor)
+     *
+     * After transpose+reshape, we need [H*W*3, 85] = [num_boxes, 85]
+     *
+     * The data in NHWC is already [H, W, C] where C = 255 = 3*85
+     * We need to reinterpret as [H, W, 3, 85] then reshape to [H*W*3, 85]
+     * This is just a reshape - no actual data movement needed!
+     */
+
+    /* Check if this is just a no-op reshape situation */
+    /* For YOLOv5 heads, the transpose just reinterprets the anchor/class ordering */
+    if (ndims == 5 && params->perm[0] == 0 && params->perm[1] == 1 &&
+        params->perm[2] == 3 && params->perm[3] == 4 && params->perm[4] == 2) {
+        /* YOLOv5 specific: [1, 3, 85, H, W] -> [1, 3, H, W, 85]
+         * In NHWC this is stored as [1, H, W, 255] -> [1, H, W, 255]
+         * Just copy the data - the layout is already correct for row-major access
+         */
+        memcpy(dst, src, in_size * sizeof(int8_t));
+        return MARS_OK;
+    }
+
+    /* General transpose - compute strides and permute */
+    for (int i = (int)ndims - 1; i >= 0; i--) {
+        in_stride[i] = total;
+        total *= in_shape[i];
+    }
+
+    /* Compute output strides based on permutation */
+    int32_t out_shape[6], out_stride[6];
+    for (uint32_t i = 0; i < ndims; i++) {
+        out_shape[i] = in_shape[params->perm[i]];
+    }
+    total = 1;
+    for (int i = (int)ndims - 1; i >= 0; i--) {
+        out_stride[i] = total;
+        total *= out_shape[i];
+    }
+
+    /* Simple element-wise transpose (slow but correct) */
+    int32_t coords[6] = {0};
+    for (int32_t idx = 0; idx < total; idx++) {
+        /* Convert flat index to output coordinates */
+        int32_t tmp = idx;
+        for (int d = 0; d < (int)ndims; d++) {
+            coords[d] = tmp / out_stride[d];
+            tmp = tmp % out_stride[d];
+        }
+
+        /* Map output coords to input coords via inverse perm */
+        int32_t in_idx = 0;
+        for (uint32_t d = 0; d < ndims; d++) {
+            in_idx += coords[d] * in_stride[params->perm[d]];
+        }
+
+        dst[idx] = src[in_idx];
     }
 
     return MARS_OK;
@@ -1201,12 +1611,10 @@ static mars_error_t execute_layer(mars_model_t *model, mars_runtime_layer_t *lay
             return execute_upsample(model, layer);
 
         case MARS_LAYER_RESHAPE:
-            /* Reshape is a no-op for data, just reinterpret shape */
-            return MARS_OK;
+            return execute_reshape(model, layer);
 
         case MARS_LAYER_TRANSPOSE:
-            /* TODO: implement transpose */
-            return MARS_OK;
+            return execute_transpose(model, layer);
 
         case MARS_LAYER_SOFTMAX:
             /* TODO: implement softmax */

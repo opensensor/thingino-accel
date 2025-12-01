@@ -121,7 +121,6 @@ This is an early-stage project. Contributions welcome!
 
 ## References
 
-- Ingenic Magik Venus Programming Manual
 - OEM binaries: `libvenus.so`, `libdrivers.so`, `libaip.so`
 - Kernel module: `soc-nna.ko`
 - Model format: `.mgk` (ELF shared object)

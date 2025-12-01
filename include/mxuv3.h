@@ -693,11 +693,14 @@ static inline void mxuv3_zero_vpr0(void) {
  * S4MACSSB - 4-word segment, signed×signed byte MAC
  * Encoding verified: S4MACSSB(0, 0, 1) = 0x4BC00F08
  *
- * Computes 4 dot products of 16 bytes each, accumulating to VSR:
- *   VSR[vsd][0] += dot(vrs[0:15], vrp[0:15])
- *   VSR[vsd][1] += dot(vrs[16:31], vrp[16:31])
- *   VSR[vsd][2] += dot(vrs[32:47], vrp[32:47])
- *   VSR[vsd][3] += dot(vrs[48:63], vrp[48:63])
+ * Computes 4 dot products of 16 bytes each, accumulating to VSR.
+ * After MFSUMZ to a VPR and SA0_VPR to memory, the 4 segment sums are at
+ * int32 positions 0, 4, 8, 12 (stride=4), NOT 0, 1, 2, 3!
+ *
+ *   scratch[0]  += dot(vrs[0:15], vrp[0:15])    (segment 0)
+ *   scratch[4]  += dot(vrs[16:31], vrp[16:31])  (segment 1)
+ *   scratch[8]  += dot(vrs[32:47], vrp[32:47])  (segment 2)
+ *   scratch[12] += dot(vrs[48:63], vrp[48:63])  (segment 3)
  */
 #define S4MACSSB(vsd, vrs, vrp) do { \
     __asm__ __volatile__( \

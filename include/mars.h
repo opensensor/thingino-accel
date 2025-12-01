@@ -191,6 +191,12 @@ typedef struct __attribute__((packed)) {
     uint32_t ndims;
 } mars_reshape_params_t;
 
+/* Transpose parameters */
+typedef struct __attribute__((packed)) {
+    uint32_t perm[MARS_MAX_DIMS];     /* Permutation indices */
+    uint32_t ndims;                    /* Number of dimensions */
+} mars_transpose_params_t;
+
 /* Fully connected parameters */
 typedef struct __attribute__((packed)) {
     uint32_t weight_tensor_id;
@@ -215,6 +221,7 @@ typedef struct __attribute__((packed)) {
         mars_concat_params_t concat;
         mars_upsample_params_t upsample;
         mars_reshape_params_t reshape;
+        mars_transpose_params_t transpose;
         mars_fc_params_t fc;
         uint8_t raw[64];
     } params;

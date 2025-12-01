@@ -120,8 +120,8 @@ static inline int32_t inner_product_mxu_int8(const int8_t * __restrict in,
     SA0_VPR(8, scratch);
     __asm__ __volatile__("sync" ::: "memory");
 
-    /* Sum the 4 segment accumulators (each holds sum of 16 byte products) */
-    sum = scratch[0] + scratch[1] + scratch[2] + scratch[3];
+    /* Sum the 4 segment accumulators at positions 0, 4, 8, 12 (stride=4) */
+    sum = scratch[0] + scratch[4] + scratch[8] + scratch[12];
 
     /* Handle remaining elements with scalar code */
     for (; i < count; i++) {
@@ -199,16 +199,26 @@ void conv2d_int8_mxu(
                         S4MACSSB(2, 0, 3);
                         S4MACSSB(3, 0, 4);
                     }
+                    /* Extract accumulated sums from VSR to VPR and zero VSR */
                     MFSUMZ(8, 0); MFSUMZ(9, 1); MFSUMZ(10, 2); MFSUMZ(11, 3);
+
+                    /* Read each VPR with sync before reading
+                     * S4MACSSB places segment sums at positions 0, 4, 8, 12 */
                     SA0_VPR(8, scratch);
                     __asm__ __volatile__("sync" ::: "memory");
-                    int32_t s0 = scratch[0] + scratch[1] + scratch[2] + scratch[3];
+                    int32_t s0 = scratch[0] + scratch[4] + scratch[8] + scratch[12];
+
                     SA0_VPR(9, scratch);
-                    int32_t s1 = scratch[0] + scratch[1] + scratch[2] + scratch[3];
+                    __asm__ __volatile__("sync" ::: "memory");
+                    int32_t s1 = scratch[0] + scratch[4] + scratch[8] + scratch[12];
+
                     SA0_VPR(10, scratch);
-                    int32_t s2 = scratch[0] + scratch[1] + scratch[2] + scratch[3];
+                    __asm__ __volatile__("sync" ::: "memory");
+                    int32_t s2 = scratch[0] + scratch[4] + scratch[8] + scratch[12];
+
                     SA0_VPR(11, scratch);
-                    int32_t s3 = scratch[0] + scratch[1] + scratch[2] + scratch[3];
+                    __asm__ __volatile__("sync" ::: "memory");
+                    int32_t s3 = scratch[0] + scratch[4] + scratch[8] + scratch[12];
 
                     for (; i < in_c; i++) {
                         int8_t v = gather_buf[i];
@@ -327,17 +337,26 @@ void conv2d_int8_mxu(
                         S4MACSSB(3, 0, 4);
                     }
 
-                    /* Single sync for all 4 channels */
+                    /* Extract accumulated sums from VSR to VPR and zero VSR */
                     MFSUMZ(8, 0); MFSUMZ(9, 1); MFSUMZ(10, 2); MFSUMZ(11, 3);
+
+                    /* Read each VPR with sync before reading
+                     * S4MACSSB places segment sums at positions 0, 4, 8, 12 */
                     SA0_VPR(8, scratch);
                     __asm__ __volatile__("sync" ::: "memory");
-                    int32_t s0 = scratch[0] + scratch[1] + scratch[2] + scratch[3];
+                    int32_t s0 = scratch[0] + scratch[4] + scratch[8] + scratch[12];
+
                     SA0_VPR(9, scratch);
-                    int32_t s1 = scratch[0] + scratch[1] + scratch[2] + scratch[3];
+                    __asm__ __volatile__("sync" ::: "memory");
+                    int32_t s1 = scratch[0] + scratch[4] + scratch[8] + scratch[12];
+
                     SA0_VPR(10, scratch);
-                    int32_t s2 = scratch[0] + scratch[1] + scratch[2] + scratch[3];
+                    __asm__ __volatile__("sync" ::: "memory");
+                    int32_t s2 = scratch[0] + scratch[4] + scratch[8] + scratch[12];
+
                     SA0_VPR(11, scratch);
-                    int32_t s3 = scratch[0] + scratch[1] + scratch[2] + scratch[3];
+                    __asm__ __volatile__("sync" ::: "memory");
+                    int32_t s3 = scratch[0] + scratch[4] + scratch[8] + scratch[12];
 
                     /* Scalar remainder */
                     for (; i < weight_per_oc; i++) {
@@ -380,7 +399,8 @@ void conv2d_int8_mxu(
                     MFSUMZ(8, 0);
                     SA0_VPR(8, scratch);
                     __asm__ __volatile__("sync" ::: "memory");
-                    int32_t sum = scratch[0] + scratch[1] + scratch[2] + scratch[3];
+                    /* S4MACSSB places segment sums at positions 0, 4, 8, 12 */
+                    int32_t sum = scratch[0] + scratch[4] + scratch[8] + scratch[12];
                     for (; i < weight_per_oc; i++) {
                         sum += (int32_t)im2col_buf[i] * (int32_t)w_oc[i];
                     }
@@ -493,8 +513,20 @@ void conv2d_int8_nhwc_mxu(
     /* Check if we can use MXU (need at least 64 bytes for one VPR) */
     int use_mxu = (weight_per_oc >= 64);
 
+    /* Progress tracking for debugging */
+    static int first_call = 1;
+    int total_rows = out_h;
+    int print_interval = total_rows > 100 ? total_rows / 10 : 10;
+
     for (int oh = 0; oh < out_h; oh++) {
+        if (first_call && (oh % print_interval == 0)) {
+            fprintf(stderr, "  [MXU Conv] row %d/%d\n", oh, out_h);
+        }
         for (int ow = 0; ow < out_w; ow++) {
+            /* Debug: for first position, also compute scalar reference */
+            int debug_pos = (first_call && oh == 0 && ow == 0);
+            int32_t scalar_sums[16] = {0};
+
             /* Gather kernel window - NHWC makes this fast!
              * For each kernel row, copy in_c contiguous bytes
              */
@@ -516,6 +548,24 @@ void conv2d_int8_nhwc_mxu(
                     }
                     dst += in_c;
                 }
+            }
+
+            /* Debug: compute scalar reference for first position */
+            if (debug_pos) {
+                for (int oc = 0; oc < out_c && oc < 16; oc++) {
+                    const int8_t *w_oc = weight + oc * weight_per_oc;
+                    int32_t sum = 0;
+                    for (int i = 0; i < weight_per_oc; i++) {
+                        sum += (int32_t)im2col_buf[i] * (int32_t)w_oc[i];
+                    }
+                    scalar_sums[oc] = sum;
+                }
+                fprintf(stderr, "  [DEBUG] im2col first 24: ");
+                for (int i = 0; i < 24; i++) fprintf(stderr, "%d ", im2col_buf[i]);
+                fprintf(stderr, "\n");
+                fprintf(stderr, "  [DEBUG] Scalar dot products (no bias): ");
+                for (int oc = 0; oc < 16; oc++) fprintf(stderr, "%d ", scalar_sums[oc]);
+                fprintf(stderr, "\n");
             }
 
             /* Output position in NHWC format */
@@ -545,17 +595,28 @@ void conv2d_int8_nhwc_mxu(
                         S4MACSSB(3, 0, 4);
                     }
 
-                    /* Single sync for all 4 channels */
+                    /* Extract accumulated sums from VSR to VPR and zero VSR */
                     MFSUMZ(8, 0); MFSUMZ(9, 1); MFSUMZ(10, 2); MFSUMZ(11, 3);
+
+                    /* Read each VPR with sync before reading
+                     * S4MACSSB places 4 segment sums at positions 0, 4, 8, 12 (stride=4)
+                     * NOT positions 0, 1, 2, 3 as originally assumed!
+                     */
                     SA0_VPR(8, scratch);
                     __asm__ __volatile__("sync" ::: "memory");
-                    int32_t s0 = scratch[0] + scratch[1] + scratch[2] + scratch[3];
+                    int32_t s0 = scratch[0] + scratch[4] + scratch[8] + scratch[12];
+
                     SA0_VPR(9, scratch);
-                    int32_t s1 = scratch[0] + scratch[1] + scratch[2] + scratch[3];
+                    __asm__ __volatile__("sync" ::: "memory");
+                    int32_t s1 = scratch[0] + scratch[4] + scratch[8] + scratch[12];
+
                     SA0_VPR(10, scratch);
-                    int32_t s2 = scratch[0] + scratch[1] + scratch[2] + scratch[3];
+                    __asm__ __volatile__("sync" ::: "memory");
+                    int32_t s2 = scratch[0] + scratch[4] + scratch[8] + scratch[12];
+
                     SA0_VPR(11, scratch);
-                    int32_t s3 = scratch[0] + scratch[1] + scratch[2] + scratch[3];
+                    __asm__ __volatile__("sync" ::: "memory");
+                    int32_t s3 = scratch[0] + scratch[4] + scratch[8] + scratch[12];
 
                     /* Scalar remainder */
                     for (; i < weight_per_oc; i++) {
@@ -564,6 +625,19 @@ void conv2d_int8_nhwc_mxu(
                         s1 += (int32_t)v * (int32_t)w1[i];
                         s2 += (int32_t)v * (int32_t)w2[i];
                         s3 += (int32_t)v * (int32_t)w3[i];
+                    }
+
+                    /* Debug: compare MXU vs scalar for first position, first 4 channels */
+                    if (debug_pos && oc == 0) {
+                        /* Print all 16 scratch values to understand MFSUMZ output format */
+                        SA0_VPR(8, scratch);
+                        __asm__ __volatile__("sync" ::: "memory");
+                        fprintf(stderr, "  [DEBUG] VPR8 scratch all 16: ");
+                        for (int j = 0; j < 16; j++) fprintf(stderr, "%d ", scratch[j]);
+                        fprintf(stderr, "\n");
+                        fprintf(stderr, "  [DEBUG] MXU dot prods (no bias): %d %d %d %d\n", s0, s1, s2, s3);
+                        fprintf(stderr, "  [DEBUG] Scalar reference:        %d %d %d %d\n",
+                                scalar_sums[0], scalar_sums[1], scalar_sums[2], scalar_sums[3]);
                     }
 
                     /* Add bias */
@@ -598,7 +672,8 @@ void conv2d_int8_nhwc_mxu(
                     MFSUMZ(8, 0);
                     SA0_VPR(8, scratch);
                     __asm__ __volatile__("sync" ::: "memory");
-                    int32_t sum = scratch[0] + scratch[1] + scratch[2] + scratch[3];
+                    /* S4MACSSB places segment sums at positions 0, 4, 8, 12 */
+                    int32_t sum = scratch[0] + scratch[4] + scratch[8] + scratch[12];
                     for (; i < weight_per_oc; i++) {
                         sum += (int32_t)im2col_buf[i] * (int32_t)w_oc[i];
                     }
@@ -622,6 +697,10 @@ void conv2d_int8_nhwc_mxu(
                 }
             }
         }
+    }
+    if (first_call) {
+        fprintf(stderr, "  [MXU Conv] done\n");
+        first_call = 0;
     }
 }
 

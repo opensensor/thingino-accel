@@ -69,6 +69,7 @@ int main(int argc, char *argv[]) {
     printf("  Data: vaddr=%p paddr=%p\n", input->vaddr, input->paddr);
 
     /* Fill input with test pattern */
+    /* For QDQ models: int8 = (float / scale) + zero_point, zero_point = -128 */
     if (input->vaddr) {
         size_t input_size = input->alloc_size;
         printf("  Filling %zu bytes with test pattern...\n", input_size);
@@ -80,8 +81,10 @@ int main(int argc, char *argv[]) {
             }
         } else {
             int8_t *p = (int8_t *)input->vaddr;
+            /* Asymmetric quantization: pixel=127 -> int8=-1, pixel=0 -> int8=-128 */
             for (size_t i = 0; i < input_size; i++) {
-                p[i] = (int8_t)(i % 127);  /* 0-126 incrementing pattern */
+                int pixel = (i % 256);  /* 0-255 pixel pattern */
+                p[i] = (int8_t)(pixel - 128);  /* Map [0,255] -> [-128,127] */
             }
         }
     }
