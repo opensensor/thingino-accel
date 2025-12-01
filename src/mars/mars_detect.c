@@ -202,32 +202,42 @@ static int decode_head(const int8_t* data, float scale, int scale_idx,
     int grid_w = grid_sizes[scale_idx];
     int stride = strides[scale_idx];
 
-    // Debug first detection
+    // Debug first position
     printf("\n[Scale %d] Grid=%dx%d, stride=%d, scale=%.6f\n",
            scale_idx, grid_h, grid_w, stride, scale);
-    printf("  First 85 raw values (anchor 0 at pos 0,0): ");
-    for (int i = 0; i < 85; i++) {
-        if (i == 5) printf("| ");  // Separate box from classes
-        printf("%d ", data[i]);
-    }
-    printf("\n");
 
-    // Decode first position for debug
-    {
-        float bx = data[0] * scale;
-        float by = data[1] * scale;
-        float bw = data[2] * scale;
-        float bh = data[3] * scale;
-        float obj = data[4] * scale;
-        printf("  Pos[0,0,a0]: raw=[%d,%d,%d,%d,%d] dequant=[%.3f,%.3f,%.3f,%.3f,%.3f]\n",
-               data[0], data[1], data[2], data[3], data[4], bx, by, bw, bh, obj);
-        printf("               sigmoid=[%.3f,%.3f,%.3f,%.3f,%.3f]\n",
-               sigmoid(bx), sigmoid(by), sigmoid(bw), sigmoid(bh), sigmoid(obj));
+    // Sample a few key positions where we expect to find the two people:
+    // Zidane (left): face around pixel (150, 250) -> grid pos depends on scale
+    // Ancelotti (right): face around pixel (500, 180) -> grid pos depends on scale
+    int check_positions[4][2];
+    if (scale_idx == 0) {  // 80x80, stride 8
+        check_positions[0][0] = 31; check_positions[0][1] = 18;  // Zidane ~(150,250)/8
+        check_positions[1][0] = 22; check_positions[1][1] = 62;  // Ancelotti ~(500,180)/8
+        check_positions[2][0] = 40; check_positions[2][1] = 40;  // Center
+        check_positions[3][0] = 0; check_positions[3][1] = 0;    // Corner
+    } else if (scale_idx == 1) {  // 40x40, stride 16
+        check_positions[0][0] = 15; check_positions[0][1] = 9;   // Zidane
+        check_positions[1][0] = 11; check_positions[1][1] = 31;  // Ancelotti
+        check_positions[2][0] = 20; check_positions[2][1] = 20;  // Center
+        check_positions[3][0] = 0; check_positions[3][1] = 0;    // Corner
+    } else {  // 20x20, stride 32
+        check_positions[0][0] = 7; check_positions[0][1] = 4;    // Zidane
+        check_positions[1][0] = 5; check_positions[1][1] = 15;   // Ancelotti
+        check_positions[2][0] = 10; check_positions[2][1] = 10;  // Center
+        check_positions[3][0] = 0; check_positions[3][1] = 0;    // Corner
     }
 
-    // NHWC layout: [1, H, W, 255]
-    // 255 = 3 anchors * 85 values per anchor
-    // For each position, data is interleaved: anchor0[85], anchor1[85], anchor2[85]
+    printf("  Checking key positions (y,x):\n");
+    for (int p = 0; p < 4; p++) {
+        int y = check_positions[p][0];
+        int x = check_positions[p][1];
+        int offset = (y * grid_w + x) * 255;  // NHWC offset
+        printf("    pos[%d,%d]: obj_raw=[%d,%d,%d] -> conf=[%.3f,%.3f,%.3f]\n",
+               y, x, data[offset+4], data[offset+89], data[offset+174],
+               sigmoid(data[offset+4] * scale),
+               sigmoid(data[offset+89] * scale),
+               sigmoid(data[offset+174] * scale));
+    }
 
     // Find max objectness in this head for debugging
     float max_obj_conf = 0.0f;
@@ -241,12 +251,19 @@ static int decode_head(const int8_t* data, float scale, int scale_idx,
                 int offset = (y * grid_w + x) * 255 + a * 85;
                 const int8_t* box = data + offset;
 
+                // Get raw values
+                int8_t raw_bx = box[0];
+                int8_t raw_by = box[1];
+                int8_t raw_bw = box[2];
+                int8_t raw_bh = box[3];
+                int8_t raw_obj = box[4];
+
                 // Dequantize box values
-                float bx = box[0] * scale;
-                float by = box[1] * scale;
-                float bw = box[2] * scale;
-                float bh = box[3] * scale;
-                float obj = box[4] * scale;
+                float bx = raw_bx * scale;
+                float by = raw_by * scale;
+                float bw = raw_bw * scale;
+                float bh = raw_bh * scale;
+                float obj = raw_obj * scale;
 
                 // Apply sigmoid to objectness
                 float obj_conf = sigmoid(obj);
@@ -257,17 +274,18 @@ static int decode_head(const int8_t* data, float scale, int scale_idx,
                     max_obj_y = y;
                     max_obj_x = x;
                     max_obj_a = a;
-                    max_obj_raw = box[4];
+                    max_obj_raw = raw_obj;
                 }
 
                 if (obj_conf < CONF_THRESHOLD) continue;
                 if (num_dets >= max_detections) continue;
 
-                // Find best class
+                // Find best class from NHWC layout
                 int best_class = 0;
                 float best_score = -1e9f;
                 for (int c = 0; c < NUM_CLASSES; c++) {
-                    float score = box[5 + c] * scale;
+                    int8_t raw_score = box[5 + c];  // NHWC: classes at offset 5-84
+                    float score = raw_score * scale;
                     if (score > best_score) {
                         best_score = score;
                         best_class = c;
