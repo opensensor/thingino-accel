@@ -756,7 +756,7 @@ static void conv2d_int8_sw(
 
                 /* Apply scale and clamp to int8 range */
                 float scaled = sum * combined_scale;
-                int32_t result = (int32_t)(scaled + 0.5f);
+                int32_t result = (int32_t)(scaled + (scaled >= 0 ? 0.5f : -0.5f));
                 if (result > 127) result = 127;
                 if (result < -128) result = -128;
 
@@ -1046,14 +1046,28 @@ static mars_error_t execute_mul(mars_model_t *model, mars_runtime_layer_t *layer
     static int mul_count = 0;
     mul_count++;
 
-    mars_runtime_tensor_t *input_a = get_tensor_by_id(model, desc->input_tensor_ids[0]);
-    mars_runtime_tensor_t *input_b = get_tensor_by_id(model, desc->input_tensor_ids[1]);
-    mars_runtime_tensor_t *output = get_tensor_by_id(model, desc->output_tensor_ids[0]);
+    uint32_t in_a_id = desc->input_tensor_ids[0];
+    uint32_t in_b_id = desc->input_tensor_ids[1];
+    uint32_t out_id = desc->output_tensor_ids[0];
+
+    mars_runtime_tensor_t *input_a = get_tensor_by_id(model, in_a_id);
+    mars_runtime_tensor_t *input_b = get_tensor_by_id(model, in_b_id);
+    mars_runtime_tensor_t *output = get_tensor_by_id(model, out_id);
 
     if (!input_a || !input_b || !output) {
+        fprintf(stderr, "Mars: Mul layer %u: tensor lookup failed (a=%p b=%p out=%p) ids=[%u,%u]->[%u]\n",
+                desc->id, (void*)input_a, (void*)input_b, (void*)output, in_a_id, in_b_id, out_id);
         return MARS_ERR_INVALID_TENSOR;
     }
     if (!input_a->vaddr || !input_b->vaddr || !output->vaddr) {
+        fprintf(stderr, "Mars: Mul layer %u: vaddr NULL (a=%p b=%p out=%p) ids=[%u,%u]->[%u]\n",
+                desc->id, input_a->vaddr, input_b->vaddr, output->vaddr, in_a_id, in_b_id, out_id);
+        fprintf(stderr, "  Tensor %u: produced_at=%d last_used_at=%d buffer_idx=%d\n",
+                in_a_id, input_a->produced_at, input_a->last_used_at, input_a->buffer_idx);
+        fprintf(stderr, "  Tensor %u: produced_at=%d last_used_at=%d buffer_idx=%d\n",
+                in_b_id, input_b->produced_at, input_b->last_used_at, input_b->buffer_idx);
+        fprintf(stderr, "  Tensor %u: produced_at=%d last_used_at=%d buffer_idx=%d\n",
+                out_id, output->produced_at, output->last_used_at, output->buffer_idx);
         return MARS_ERR_INVALID_TENSOR;
     }
 
@@ -1712,8 +1726,9 @@ static mars_error_t execute_silu(mars_model_t *model, mars_runtime_layer_t *laye
         /* SiLU = x * sigmoid(x) */
         float sigmoid_x = 1.0f / (1.0f + expf(-x));
         float y = x * sigmoid_x;
-        /* Requantize */
-        int32_t q = (int32_t)(y / out_scale + 0.5f);
+        /* Requantize with proper rounding for negative values */
+        float scaled = y / out_scale;
+        int32_t q = (int32_t)(scaled + (scaled >= 0 ? 0.5f : -0.5f));
         if (q > 127) q = 127;
         if (q < -128) q = -128;
         out[i] = (int8_t)q;
