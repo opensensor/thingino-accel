@@ -1,7 +1,7 @@
 /**
  * Mars YOLOv5 Detection Test
  *
- * Loads a JPEG image, runs YOLOv5 inference, and outputs detections
+ * Loads a JPEG/PNG/PPM image, runs YOLOv5 inference, and outputs detections
  */
 
 #include <stdio.h>
@@ -13,6 +13,20 @@
 #include "mars_runtime.h"
 #include "nna.h"
 #include "nna_memory.h"
+
+/* stb_image for JPEG/PNG loading */
+#define STB_IMAGE_IMPLEMENTATION
+#define STBI_NO_PSD
+#define STBI_NO_TGA
+#define STBI_NO_GIF
+#define STBI_NO_HDR
+#define STBI_NO_PIC
+#define STBI_NO_PNM  /* We have our own PPM loader */
+#include "stb_image.h"
+
+/* stb_image_write for JPEG/PNG output */
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "stb_image_write.h"
 
 /* External cache flush for MIPS */
 extern void nna_cache_flush(void *ptr, size_t size);
@@ -135,16 +149,47 @@ static int apply_nms(Detection* detections, int count, float nms_threshold) {
     return kept;
 }
 
-// Simple JPEG loader using stb_image-style approach
-// For now, we'll use a simpler PPM format or raw RGB
+// Load image using stb_image (supports JPEG, PNG, BMP) or PPM fallback
 static int load_test_image(const char* path, uint8_t* rgb_data, int target_w, int target_h) {
-    // Try to load as raw RGB first (for testing)
+    int w, h, channels;
+
+    // Try stb_image first (handles JPEG, PNG, BMP)
+    unsigned char* img = stbi_load(path, &w, &h, &channels, 3);  // Force RGB
+
+    if (img) {
+        printf("Loaded image: %dx%d (%d channels -> RGB)\n", w, h, channels);
+
+        if (w == target_w && h == target_h) {
+            // Direct copy
+            memcpy(rgb_data, img, w * h * 3);
+        } else {
+            // Resize using nearest-neighbor
+            printf("Resizing from %dx%d to %dx%d\n", w, h, target_w, target_h);
+            for (int y = 0; y < target_h; y++) {
+                int src_y = y * h / target_h;
+                for (int x = 0; x < target_w; x++) {
+                    int src_x = x * w / target_w;
+                    int src_idx = (src_y * w + src_x) * 3;
+                    int dst_idx = (y * target_w + x) * 3;
+                    rgb_data[dst_idx + 0] = img[src_idx + 0];
+                    rgb_data[dst_idx + 1] = img[src_idx + 1];
+                    rgb_data[dst_idx + 2] = img[src_idx + 2];
+                }
+            }
+        }
+
+        stbi_image_free(img);
+        return 0;
+    }
+
+    // stb_image failed - try PPM fallback
     FILE* f = fopen(path, "rb");
     if (!f) {
         printf("Cannot open image: %s\n", path);
+        printf("stb_image error: %s\n", stbi_failure_reason());
         return -1;
     }
-    
+
     // Check if it's a PPM file
     char header[3];
     if (fread(header, 1, 2, f) != 2) {
@@ -152,10 +197,10 @@ static int load_test_image(const char* path, uint8_t* rgb_data, int target_w, in
         return -1;
     }
     header[2] = '\0';
-    
+
     if (strcmp(header, "P6") == 0) {
-        // PPM format - read header more carefully
-        int w = 0, h = 0, maxval = 0;
+        // PPM format
+        int ppm_w = 0, ppm_h = 0, maxval = 0;
         int c;
 
         // Skip whitespace after P6
@@ -169,7 +214,7 @@ static int load_test_image(const char* path, uint8_t* rgb_data, int target_w, in
 
         // Read width
         ungetc(c, f);
-        if (fscanf(f, "%d", &w) != 1) { fclose(f); return -1; }
+        if (fscanf(f, "%d", &ppm_w) != 1) { fclose(f); return -1; }
 
         // Skip whitespace
         while ((c = fgetc(f)) != EOF && (c == ' ' || c == '\t' || c == '\n' || c == '\r'));
@@ -182,7 +227,7 @@ static int load_test_image(const char* path, uint8_t* rgb_data, int target_w, in
 
         // Read height
         ungetc(c, f);
-        if (fscanf(f, "%d", &h) != 1) { fclose(f); return -1; }
+        if (fscanf(f, "%d", &ppm_h) != 1) { fclose(f); return -1; }
 
         // Skip whitespace
         while ((c = fgetc(f)) != EOF && (c == ' ' || c == '\t' || c == '\n' || c == '\r'));
@@ -200,50 +245,37 @@ static int load_test_image(const char* path, uint8_t* rgb_data, int target_w, in
         // Skip single whitespace character before binary data
         fgetc(f);
 
-        printf("Loading PPM image: %dx%d (maxval=%d)\n", w, h, maxval);
-        fflush(stdout);
+        printf("Loading PPM image: %dx%d (maxval=%d)\n", ppm_w, ppm_h, maxval);
 
-        if (w == target_w && h == target_h) {
-            // Direct read - no resize needed
-            size_t bytes_read = fread(rgb_data, 1, w * h * 3, f);
-            printf("Read %zu bytes directly\n", bytes_read);
+        if (ppm_w == target_w && ppm_h == target_h) {
+            size_t bytes_read = fread(rgb_data, 1, ppm_w * ppm_h * 3, f);
             fclose(f);
-            return (bytes_read == (size_t)(w * h * 3)) ? 0 : -1;
+            return (bytes_read == (size_t)(ppm_w * ppm_h * 3)) ? 0 : -1;
         }
 
-        // Read and resize line-by-line to avoid large temp buffer allocation
-        printf("Resizing from %dx%d to %dx%d\n", w, h, target_w, target_h);
-
-        // Remember where pixel data starts
+        // Resize line-by-line
+        printf("Resizing from %dx%d to %dx%d\n", ppm_w, ppm_h, target_w, target_h);
         long data_start = ftell(f);
-
-        // Stack buffer for one source line (max 1920 width support)
         uint8_t src_line[1920 * 3];
-        if (w > 1920) {
-            printf("Image too wide: %d > 1920\n", w);
+        if (ppm_w > 1920) {
+            printf("Image too wide: %d > 1920\n", ppm_w);
             fclose(f);
             return -1;
         }
 
         int last_src_y = -1;
-
         for (int y = 0; y < target_h; y++) {
-            int src_y = y * h / target_h;
-
-            // Read source line if changed
+            int src_y = y * ppm_h / target_h;
             if (src_y != last_src_y) {
-                fseek(f, data_start + (long)src_y * w * 3, SEEK_SET);
-                if (fread(src_line, 1, w * 3, f) != (size_t)(w * 3)) {
-                    printf("Failed to read line %d\n", src_y);
+                fseek(f, data_start + (long)src_y * ppm_w * 3, SEEK_SET);
+                if (fread(src_line, 1, ppm_w * 3, f) != (size_t)(ppm_w * 3)) {
                     fclose(f);
                     return -1;
                 }
                 last_src_y = src_y;
             }
-
-            // Resize this line horizontally
             for (int x = 0; x < target_w; x++) {
-                int src_x = x * w / target_w;
+                int src_x = x * ppm_w / target_w;
                 int src_idx = src_x * 3;
                 int dst_idx = (y * target_w + x) * 3;
                 rgb_data[dst_idx + 0] = src_line[src_idx + 0];
@@ -251,24 +283,13 @@ static int load_test_image(const char* path, uint8_t* rgb_data, int target_w, in
                 rgb_data[dst_idx + 2] = src_line[src_idx + 2];
             }
         }
-
         fclose(f);
         return 0;
     }
-    
+
     fclose(f);
-    
-    // For JPEG, we'd need libjpeg - for now generate test pattern
-    printf("Note: JPEG loading not implemented, using gradient test pattern\n");
-    for (int y = 0; y < target_h; y++) {
-        for (int x = 0; x < target_w; x++) {
-            int idx = (y * target_w + x) * 3;
-            rgb_data[idx + 0] = (uint8_t)(x * 255 / target_w);  // R gradient
-            rgb_data[idx + 1] = (uint8_t)(y * 255 / target_h);  // G gradient
-            rgb_data[idx + 2] = 128;  // B constant
-        }
-    }
-    return 0;
+    printf("Unsupported image format: %s\n", path);
+    return -1;
 }
 
 // Preprocess RGB image to INT8 NHWC format
@@ -501,17 +522,46 @@ static void draw_detections(uint8_t* rgb, int w, int h, Detection* dets, int num
     }
 }
 
-// Save image as PPM
-static int save_ppm(const char* path, const uint8_t* rgb, int w, int h) {
-    FILE* f = fopen(path, "wb");
-    if (!f) {
-        printf("Error: Cannot open %s for writing\n", path);
+// Get file extension (lowercase)
+static const char* get_extension(const char* path) {
+    const char* dot = strrchr(path, '.');
+    if (!dot || dot == path) return "";
+    return dot + 1;
+}
+
+// Save image - auto-detect format from extension (jpg, png, bmp, or ppm)
+static int save_image(const char* path, const uint8_t* rgb, int w, int h) {
+    const char* ext = get_extension(path);
+    int result = 0;
+
+    if (strcasecmp(ext, "jpg") == 0 || strcasecmp(ext, "jpeg") == 0) {
+        // JPEG with quality 90
+        result = stbi_write_jpg(path, w, h, 3, rgb, 90);
+        if (result) printf("Saved JPEG: %s\n", path);
+    } else if (strcasecmp(ext, "png") == 0) {
+        result = stbi_write_png(path, w, h, 3, rgb, w * 3);
+        if (result) printf("Saved PNG: %s\n", path);
+    } else if (strcasecmp(ext, "bmp") == 0) {
+        result = stbi_write_bmp(path, w, h, 3, rgb);
+        if (result) printf("Saved BMP: %s\n", path);
+    } else {
+        // Default to PPM
+        FILE* f = fopen(path, "wb");
+        if (!f) {
+            printf("Error: Cannot open %s for writing\n", path);
+            return -1;
+        }
+        fprintf(f, "P6\n%d %d\n255\n", w, h);
+        fwrite(rgb, 1, w * h * 3, f);
+        fclose(f);
+        printf("Saved PPM: %s\n", path);
+        return 0;
+    }
+
+    if (!result) {
+        printf("Error: Failed to save %s\n", path);
         return -1;
     }
-    fprintf(f, "P6\n%d %d\n255\n", w, h);
-    fwrite(rgb, 1, w * h * 3, f);
-    fclose(f);
-    printf("Saved output image: %s\n", path);
     return 0;
 }
 
@@ -578,8 +628,14 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Allocate image buffer from NNA memory pool
-    uint8_t* rgb_image = (uint8_t*)nna_malloc(INPUT_SIZE * INPUT_SIZE * 3);
+    // Allocate image buffer from regular heap (doesn't need NNA memory)
+    uint8_t* rgb_image = (uint8_t*)malloc(INPUT_SIZE * INPUT_SIZE * 3);
+    if (!rgb_image) {
+        printf("Failed to allocate image buffer\n");
+        mars_free(model);
+        nna_deinit();
+        return 1;
+    }
 
     // Load image
     printf("Loading image: %s\n", image_path);
@@ -591,7 +647,7 @@ int main(int argc, char* argv[]) {
     mars_runtime_tensor_t* input = mars_get_input(model, 0);
     if (!input || !input->vaddr) {
         printf("Failed to get input tensor\n");
-        nna_free(rgb_image);
+        free(rgb_image);
         mars_free(model);
         nna_deinit();
         return 1;
@@ -643,15 +699,15 @@ int main(int argc, char* argv[]) {
     if (output_path && num_dets > 0) {
         printf("\nDrawing %d bounding boxes...\n", num_dets);
         draw_detections(rgb_image, INPUT_SIZE, INPUT_SIZE, detections, num_dets);
-        save_ppm(output_path, rgb_image, INPUT_SIZE, INPUT_SIZE);
+        save_image(output_path, rgb_image, INPUT_SIZE, INPUT_SIZE);
     } else if (output_path) {
         // Save original image even if no detections
-        save_ppm(output_path, rgb_image, INPUT_SIZE, INPUT_SIZE);
+        save_image(output_path, rgb_image, INPUT_SIZE, INPUT_SIZE);
     }
 
     // Cleanup
     printf("\nCleaning up...\n");
-    nna_free(rgb_image);
+    free(rgb_image);
     mars_free(model);
     nna_deinit();
     printf("Done!\n");
