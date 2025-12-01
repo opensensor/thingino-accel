@@ -12,6 +12,7 @@
 #include "mars.h"
 #include "mars_runtime.h"
 #include "nna.h"
+#include "nna_memory.h"
 
 /* External cache flush for MIPS */
 extern void nna_cache_flush(void *ptr, size_t size);
@@ -82,9 +83,13 @@ static float compute_iou(const Detection* a, const Detection* b) {
     return inter_area / union_area;
 }
 
+// Max detections we support (to avoid dynamic allocation)
+#define MAX_DETECTIONS 100
+
 // Non-Maximum Suppression - returns new count after suppression
 static int apply_nms(Detection* detections, int count, float nms_threshold) {
     if (count <= 1) return count;
+    if (count > MAX_DETECTIONS) count = MAX_DETECTIONS;
 
     // Sort by confidence (simple bubble sort for small arrays)
     for (int i = 0; i < count - 1; i++) {
@@ -97,8 +102,8 @@ static int apply_nms(Detection* detections, int count, float nms_threshold) {
         }
     }
 
-    // Mark suppressed detections
-    int* suppressed = (int*)calloc(count, sizeof(int));
+    // Mark suppressed detections - use fixed array instead of malloc
+    uint8_t suppressed[MAX_DETECTIONS] = {0};
     int kept = 0;
 
     for (int i = 0; i < count; i++) {
@@ -122,7 +127,6 @@ static int apply_nms(Detection* detections, int count, float nms_threshold) {
         }
     }
 
-    free(suppressed);
     return kept;
 }
 
@@ -202,27 +206,47 @@ static int load_test_image(const char* path, uint8_t* rgb_data, int target_w, in
             return (bytes_read == (size_t)(w * h * 3)) ? 0 : -1;
         }
 
-        // Read and resize to target size
-        uint8_t* temp = (uint8_t*)malloc(w * h * 3);
-        if (!temp) { fclose(f); return -1; }
+        // Read and resize line-by-line to avoid large temp buffer allocation
+        printf("Resizing from %dx%d to %dx%d\n", w, h, target_w, target_h);
 
-        size_t bytes_read = fread(temp, 1, w * h * 3, f);
-        printf("Read %zu bytes, resizing from %dx%d to %dx%d\n",
-               bytes_read, w, h, target_w, target_h);
+        // Remember where pixel data starts
+        long data_start = ftell(f);
 
-        // Simple nearest-neighbor resize
+        // Stack buffer for one source line (max 1920 width support)
+        uint8_t src_line[1920 * 3];
+        if (w > 1920) {
+            printf("Image too wide: %d > 1920\n", w);
+            fclose(f);
+            return -1;
+        }
+
+        int last_src_y = -1;
+
         for (int y = 0; y < target_h; y++) {
+            int src_y = y * h / target_h;
+
+            // Read source line if changed
+            if (src_y != last_src_y) {
+                fseek(f, data_start + (long)src_y * w * 3, SEEK_SET);
+                if (fread(src_line, 1, w * 3, f) != (size_t)(w * 3)) {
+                    printf("Failed to read line %d\n", src_y);
+                    fclose(f);
+                    return -1;
+                }
+                last_src_y = src_y;
+            }
+
+            // Resize this line horizontally
             for (int x = 0; x < target_w; x++) {
                 int src_x = x * w / target_w;
-                int src_y = y * h / target_h;
-                int src_idx = (src_y * w + src_x) * 3;
+                int src_idx = src_x * 3;
                 int dst_idx = (y * target_w + x) * 3;
-                rgb_data[dst_idx + 0] = temp[src_idx + 0];
-                rgb_data[dst_idx + 1] = temp[src_idx + 1];
-                rgb_data[dst_idx + 2] = temp[src_idx + 2];
+                rgb_data[dst_idx + 0] = src_line[src_idx + 0];
+                rgb_data[dst_idx + 1] = src_line[src_idx + 1];
+                rgb_data[dst_idx + 2] = src_line[src_idx + 2];
             }
         }
-        free(temp);
+
         fclose(f);
         return 0;
     }
@@ -549,8 +573,8 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Allocate image buffer
-    uint8_t* rgb_image = (uint8_t*)malloc(INPUT_SIZE * INPUT_SIZE * 3);
+    // Allocate image buffer from NNA memory pool
+    uint8_t* rgb_image = (uint8_t*)nna_malloc(INPUT_SIZE * INPUT_SIZE * 3);
 
     // Load image
     printf("Loading image: %s\n", image_path);
@@ -562,7 +586,7 @@ int main(int argc, char* argv[]) {
     mars_runtime_tensor_t* input = mars_get_input(model, 0);
     if (!input || !input->vaddr) {
         printf("Failed to get input tensor\n");
-        free(rgb_image);
+        nna_free(rgb_image);
         mars_free(model);
         nna_deinit();
         return 1;
@@ -588,8 +612,9 @@ int main(int argc, char* argv[]) {
     int num_outputs = mars_get_num_outputs(model);
     printf("\nModel has %d outputs\n", num_outputs);
 
-    Detection detections[500];
-    int num_dets = decode_yolov5_heads(model, detections, 500);
+    /* Use static to avoid stack overflow on embedded systems */
+    static Detection detections[200];
+    int num_dets = decode_yolov5_heads(model, detections, 200);
 
     printf("\n");
     printf("╔══════════════════════════════════════════════════════════╗\n");
@@ -620,7 +645,7 @@ int main(int argc, char* argv[]) {
 
     // Cleanup
     printf("\nCleaning up...\n");
-    free(rgb_image);
+    nna_free(rgb_image);
     mars_free(model);
     nna_deinit();
     printf("Done!\n");
