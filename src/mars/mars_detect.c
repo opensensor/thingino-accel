@@ -102,17 +102,19 @@ static int apply_nms(Detection* detections, int count, float nms_threshold) {
         }
     }
 
-    // Mark suppressed detections - use fixed array instead of malloc
-    uint8_t suppressed[MAX_DETECTIONS] = {0};
+    // Mark suppressed detections
+    static uint8_t suppressed[MAX_DETECTIONS];
+    memset(suppressed, 0, count);
+
+    // Use separate result array to avoid corruption during compaction
+    static Detection result[MAX_DETECTIONS];
     int kept = 0;
 
     for (int i = 0; i < count; i++) {
         if (suppressed[i]) continue;
 
-        // Keep this detection
-        if (i != kept) {
-            detections[kept] = detections[i];
-        }
+        // Keep this detection in result array
+        result[kept] = detections[i];
         kept++;
 
         // Suppress overlapping detections of same class
@@ -126,6 +128,9 @@ static int apply_nms(Detection* detections, int count, float nms_threshold) {
             }
         }
     }
+
+    // Copy kept detections back to original array
+    memcpy(detections, result, kept * sizeof(Detection));
 
     return kept;
 }
@@ -614,6 +619,7 @@ int main(int argc, char* argv[]) {
 
     /* Use static to avoid stack overflow on embedded systems */
     static Detection detections[200];
+    memset(detections, 0, sizeof(detections));  // Clear before use
     int num_dets = decode_yolov5_heads(model, detections, 200);
 
     printf("\n");
