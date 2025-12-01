@@ -24,11 +24,14 @@ void* nna_device_get_nndma_io(void);
 /* Get NNA DMA descriptor RAM */
 void* nna_device_get_nndma_desram(void);
 
-/* Get DDR virtual address */
+/* Get DDR virtual address (for weights) */
 void* nna_device_get_ddr(void);
 
-/* Get DDR physical address */
+/* Get DDR physical address (for weights) */
 uint32_t nna_device_get_ddr_pbase(void);
+
+/* Get DDR size (for weights) */
+uint32_t nna_device_get_ddr_size(void);
 
 #endif /* THINGINO_ACCEL_DEVICE_INTERNAL_H */
 

@@ -53,11 +53,34 @@ void* nna_calloc(size_t nmemb, size_t size);
 
 /*
  * Free memory allocated by nna_malloc/nna_memalign/nna_calloc
- * 
+ *
  * Args:
  *   ptr: Pointer to memory to free
  */
 void nna_free(void *ptr);
+
+/*
+ * Get physical address for a virtual address allocated via nna_malloc
+ *
+ * Args:
+ *   vaddr: Virtual address from nna_malloc
+ *
+ * Returns:
+ *   Physical address, or NULL if not found
+ */
+void* nna_get_paddr(void *vaddr);
+
+/*
+ * Allocate DMA memory and return both virtual and physical addresses
+ *
+ * Args:
+ *   size: Number of bytes to allocate
+ *   paddr_out: Output - physical address (can be NULL if not needed)
+ *
+ * Returns:
+ *   Virtual address, or NULL on failure
+ */
+void* nna_malloc_phys(size_t size, void **paddr_out);
 
 /*
  * Allocate memory from ORAM (on-chip accelerator RAM)

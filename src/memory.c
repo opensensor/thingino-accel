@@ -195,6 +195,36 @@ void nna_free(void *ptr) {
     fprintf(stderr, "nna_free: Pointer %p not found in allocation list\n", ptr);
 }
 
+/* Get physical address for a virtual address allocated via nna_malloc */
+void* nna_get_paddr(void *vaddr) {
+    if (vaddr == NULL) {
+        return NULL;
+    }
+
+    struct mem_block *block = g_mem_list;
+    while (block != NULL) {
+        if (block->user_vaddr == vaddr) {
+            return block->paddr;
+        }
+        block = block->next;
+    }
+
+    return NULL;
+}
+
+/* Allocate DMA memory and return both virtual and physical addresses */
+void* nna_malloc_phys(size_t size, void **paddr_out) {
+    void *vaddr = nna_malloc(size);
+    if (vaddr == NULL) {
+        if (paddr_out) *paddr_out = NULL;
+        return NULL;
+    }
+    if (paddr_out) {
+        *paddr_out = nna_get_paddr(vaddr);
+    }
+    return vaddr;
+}
+
 void* nna_oram_malloc(size_t size) {
     if (oram_init() != 0) {
         return NULL;

@@ -112,7 +112,8 @@ static struct {
     void *l2cache_size_vaddr;   /* L2 cache size register mapping */
     void *nndma_io_mapped;      /* NNA DMA I/O registers */
     void *nndma_desram_mapped;  /* NNA DMA descriptor RAM */
-    void *ddr_mapped;           /* DDR DMA memory */
+    /* Single DDR chunk for weights only - tensors use nna_malloc */
+    void *ddr_mapped;           /* DDR DMA memory for weights */
     uint32_t ddr_pbase;         /* DDR physical address */
     uint32_t ddr_size;          /* DDR size */
 } g_nna_dev = {
@@ -233,36 +234,29 @@ int nna_init(void) {
 
     printf("NNA version: 0x%08x\n", version_info.version_buf);
 
-    /* Allocate DDR DMA memory - use available nmem size or 8MB, whichever is smaller.
-     * Note: The kernel driver appears to have a ~8MB limit for contiguous allocation.
-     * The model weight data (~7.5MB) fits within this limit.
-     */
-    g_nna_dev.ddr_size = nmem_size;
-    if (g_nna_dev.ddr_size > 8 * 1024 * 1024) {
-        g_nna_dev.ddr_size = 8 * 1024 * 1024;  /* Cap at 8MB */
-    }
-
-    struct soc_nna_buf ddr_buf;
-    ddr_buf.size = g_nna_dev.ddr_size;
+    /* Allocate single DDR chunk for weights. Tensors will use nna_malloc(). */
+    const uint32_t DDR_SIZE = 8 * 1024 * 1024;  /* 8MB for weights */
+    struct soc_nna_buf ddr_buf = {0};
+    ddr_buf.size = DDR_SIZE;
 
     if (ioctl(g_nna_dev.fd, IOCTL_SOC_NNA_MALLOC, &ddr_buf) < 0) {
-        fprintf(stderr, "Error: DDR Malloc size=%d failed: %s\n",
-                g_nna_dev.ddr_size, strerror(errno));
+        fprintf(stderr, "Error: DDR allocation failed\n");
         goto cleanup_oram;
     }
 
     g_nna_dev.ddr_pbase = (uint32_t)(uintptr_t)ddr_buf.paddr;
+    g_nna_dev.ddr_size = DDR_SIZE;
 
-    /* Step 6: Map DDR memory to userspace */
-    g_nna_dev.ddr_mapped = mmap(NULL, g_nna_dev.ddr_size, PROT_READ | PROT_WRITE,
+    g_nna_dev.ddr_mapped = mmap(NULL, DDR_SIZE, PROT_READ | PROT_WRITE,
                                  MAP_SHARED, g_nna_dev.memfd, g_nna_dev.ddr_pbase);
     if (g_nna_dev.ddr_mapped == MAP_FAILED) {
-        fprintf(stderr, "Error: DDR mmap paddr=0x%08x size=0x%08x failed: %s\n",
-                g_nna_dev.ddr_pbase, g_nna_dev.ddr_size, strerror(errno));
-        /* Free the allocated DMA memory */
+        fprintf(stderr, "Error: DDR mmap failed: %s\n", strerror(errno));
         ioctl(g_nna_dev.fd, IOCTL_SOC_NNA_FREE, &ddr_buf);
         goto cleanup_oram;
     }
+
+    printf("DDR for weights: %u MB at paddr=0x%08x vaddr=%p\n",
+           DDR_SIZE / (1024*1024), g_nna_dev.ddr_pbase, g_nna_dev.ddr_mapped);
 
     g_nna_dev.initialized = 1;
 
@@ -275,16 +269,22 @@ int nna_init(void) {
     printf("NNA initialized successfully\n");
     printf("  Device: %s\n", NNA_DEVICE_PATH);
     printf("  ORAM: 0x%08x (%u KB)\n", g_nna_dev.oram_pbase, g_nna_dev.oram_size / 1024);
-    printf("  DDR:  0x%08x (%u MB)\n", g_nna_dev.ddr_pbase, g_nna_dev.ddr_size / (1024*1024));
+    printf("  DDR:  0x%08x (%u MB) - for weights\n", g_nna_dev.ddr_pbase, g_nna_dev.ddr_size / (1024*1024));
+    printf("  Additional tensor memory via nna_malloc() from nmem pool (%u MB)\n", nmem_size / (1024*1024));
     printf("  NNDMA IO: %p\n", g_nna_dev.nndma_io_mapped);
     printf("  NNDMA DESRAM: %p\n", g_nna_dev.nndma_desram_mapped);
 
     return NNA_SUCCESS;
 
 cleanup_ddr:
-    munmap(g_nna_dev.ddr_mapped, g_nna_dev.ddr_size);
-    struct soc_nna_buf cleanup_buf = { .paddr = (void*)(uintptr_t)g_nna_dev.ddr_pbase, .size = g_nna_dev.ddr_size };
-    ioctl(g_nna_dev.fd, IOCTL_SOC_NNA_FREE, &cleanup_buf);
+    if (g_nna_dev.ddr_mapped != NULL) {
+        munmap(g_nna_dev.ddr_mapped, g_nna_dev.ddr_size);
+        struct soc_nna_buf cleanup_buf = {
+            .paddr = (void*)(uintptr_t)g_nna_dev.ddr_pbase,
+            .size = g_nna_dev.ddr_size
+        };
+        ioctl(g_nna_dev.fd, IOCTL_SOC_NNA_FREE, &cleanup_buf);
+    }
 cleanup_oram:
     munmap(g_nna_dev.oram_mapped, g_nna_dev.oram_size);
 cleanup_nndma_desram:
@@ -306,7 +306,7 @@ void nna_deinit(void) {
         return;
     }
 
-    /* Unmap DDR memory */
+    /* Unmap and free DDR */
     if (g_nna_dev.ddr_mapped != NULL) {
         munmap(g_nna_dev.ddr_mapped, g_nna_dev.ddr_size);
         g_nna_dev.ddr_mapped = NULL;
@@ -320,6 +320,7 @@ void nna_deinit(void) {
             ioctl(g_nna_dev.fd, IOCTL_SOC_NNA_FREE, &ddr_buf);
         }
     }
+    g_nna_dev.ddr_size = 0;
 
     /* Unmap ORAM */
     if (g_nna_dev.oram_mapped != NULL) {
@@ -422,14 +423,19 @@ void* nna_device_get_nndma_desram(void) {
     return g_nna_dev.nndma_desram_mapped;
 }
 
-/* Internal function to get DDR virtual address */
+/* Internal function to get DDR virtual address (for weights) */
 void* nna_device_get_ddr(void) {
     return g_nna_dev.ddr_mapped;
 }
 
-/* Internal function to get DDR physical address */
+/* Internal function to get DDR physical address (for weights) */
 uint32_t nna_device_get_ddr_pbase(void) {
     return g_nna_dev.ddr_pbase;
+}
+
+/* Internal function to get DDR size (for weights) */
+uint32_t nna_device_get_ddr_size(void) {
+    return g_nna_dev.ddr_size;
 }
 
 int nna_lock(void) {

@@ -15,6 +15,7 @@
 #include "mars.h"
 #include "mars_runtime.h"
 #include "nna.h"
+#include "nna_memory.h"
 #include "device_internal.h"
 #include "mxu_ops.h"
 
@@ -176,10 +177,14 @@ mars_error_t mars_load_memory(const void *data, size_t size, mars_model_t **out_
         return MARS_ERR_ALLOC_FAILED;
     }
 
-    /* Read tensor descriptors */
+    /* Read tensor descriptors and initialize liveness tracking */
     for (uint32_t i = 0; i < header.num_tensors; i++) {
         memcpy(&model->tensors[i].desc, ptr, sizeof(mars_tensor_t));
         ptr += sizeof(mars_tensor_t);
+        /* Initialize liveness: -1 means not yet determined */
+        model->tensors[i].produced_at = -1;
+        model->tensors[i].last_used_at = -1;
+        model->tensors[i].buffer_idx = -1;
     }
     fprintf(stderr, "Mars: Tensors loaded\n"); fflush(stderr);
 
@@ -200,15 +205,42 @@ mars_error_t mars_load_memory(const void *data, size_t size, mars_model_t **out_
     }
     fprintf(stderr, "Mars: Layers loaded\n"); fflush(stderr);
 
+    /*
+     * Build tensor liveness table:
+     * - produced_at: layer index where tensor is produced (output of layer)
+     * - last_used_at: layer index where tensor is last consumed (input to layer)
+     * This allows dynamic buffer assignment during execution.
+     */
+    for (uint32_t layer_idx = 0; layer_idx < header.num_layers; layer_idx++) {
+        mars_layer_t *layer = &model->layers[layer_idx].desc;
+
+        /* Mark outputs as produced at this layer */
+        for (uint32_t o = 0; o < layer->num_outputs; o++) {
+            uint32_t tid = layer->output_tensor_ids[o];
+            if (tid < header.num_tensors) {
+                model->tensors[tid].produced_at = (int32_t)layer_idx;
+            }
+        }
+
+        /* Update last_used_at for all inputs */
+        for (uint32_t i = 0; i < layer->num_inputs; i++) {
+            uint32_t tid = layer->input_tensor_ids[i];
+            if (tid < header.num_tensors) {
+                model->tensors[tid].last_used_at = (int32_t)layer_idx;
+            }
+        }
+    }
+    fprintf(stderr, "Mars: Tensor liveness computed\n"); fflush(stderr);
+
     /* Get NNA resources */
     fprintf(stderr, "Mars: Getting NNA resources...\n"); fflush(stderr);
+    /* Get DDR for weights (single chunk) */
     model->ddr_base = nna_device_get_ddr();
-    fprintf(stderr, "Mars: ddr_base=%p\n", model->ddr_base); fflush(stderr);
+    fprintf(stderr, "Mars: ddr_base=%p (for weights)\n", model->ddr_base); fflush(stderr);
     model->ddr_paddr = (void *)(uintptr_t)nna_device_get_ddr_pbase();
-    fprintf(stderr, "Mars: ddr_paddr=%p\n", model->ddr_paddr); fflush(stderr);
-    model->ddr_size = 8 * 1024 * 1024;  /* 8MB */
+    model->ddr_size = nna_device_get_ddr_size();
+    fprintf(stderr, "Mars: ddr_size=%zu bytes (%zu MB)\n", model->ddr_size, model->ddr_size / (1024*1024)); fflush(stderr);
     model->oram_base = nna_device_get_oram();
-    fprintf(stderr, "Mars: oram_base=%p\n", model->oram_base); fflush(stderr);
     model->oram_paddr = model->oram_base;  /* TODO: get actual paddr */
     model->oram_size = 384 * 1024;  /* 384KB */
 
@@ -216,6 +248,7 @@ mars_error_t mars_load_memory(const void *data, size_t size, mars_model_t **out_
     fprintf(stderr, "Mars: Loading weights (offset=%llu, size=%llu)\n",
             (unsigned long long)header.weights_offset, (unsigned long long)header.weights_size);
     fflush(stderr);
+
     if (header.weights_size > 0) {
         const uint8_t *weights_src = (const uint8_t *)data + header.weights_offset;
         model->weights_size = header.weights_size;
@@ -231,254 +264,166 @@ mars_error_t mars_load_memory(const void *data, size_t size, mars_model_t **out_
 
         fprintf(stderr, "Mars: Copying %zu bytes to DDR at %p\n",
                 model->weights_size, model->ddr_base);
-        /* Copy weights to DDR */
         memcpy(model->ddr_base, weights_src, model->weights_size);
         model->weights = model->ddr_base;
         fprintf(stderr, "Mars: Weights loaded successfully\n");
     }
 
     /*
-     * Memory allocation strategy: Double-buffer scheme
-     * Instead of allocating all tensors, we use 2 working buffers and ping-pong.
-     * This works because most ops are: input -> output, no persistent tensors needed.
+     * DYNAMIC TENSOR ALLOCATION STRATEGY
      *
-     * Exception: Skip connections (concat, add) need inputs kept around.
-     * For now, use simple double-buffer; will need enhancement for skip connections.
+     * Each tensor is allocated via nna_malloc_phys() from the nmem pool.
+     * This allows us to use all available nmem (~29MB) instead of being
+     * limited to pre-allocated chunks.
+     *
+     * We allocate:
+     * 1. I/O tensors (input/output) - always need dedicated buffers
+     * 2. Long-lived tensors (skip connections) - need to persist across layers
+     * 3. Working buffers for short-lived tensors - can be reused
      */
-    size_t ddr_remaining = model->ddr_size - model->weights_size;
-    uint8_t *ddr_ptr = (uint8_t *)model->ddr_base + model->weights_size;
 
-    /* Find max tensor size needed for working buffers */
-    size_t max_tensor_size = 0;
+    /* Find max tensor size for working buffers */
+    size_t max_intermediate_size = 0;
+    const int32_t LONG_LIVED_THRESHOLD = 5;
+
     for (uint32_t i = 0; i < header.num_tensors; i++) {
         mars_runtime_tensor_t *rt = &model->tensors[i];
-        if (rt->desc.data_size == 0) {  /* Runtime tensor, not weight */
-            size_t sz = ALIGN_UP(tensor_byte_size(&rt->desc), 64);
-            if (sz > max_tensor_size) max_tensor_size = sz;
-        }
+        if (rt->desc.data_size > 0) continue;  /* Weight tensor */
+        if (rt->produced_at < 0) continue;  /* Input tensor */
+        if (rt->last_used_at < 0) continue;  /* Output tensor */
+        size_t sz = ALIGN_UP(tensor_byte_size(&rt->desc), 64);
+        if (sz > max_intermediate_size) max_intermediate_size = sz;
     }
 
-    /*
-     * Smart buffer allocation:
-     * For simple sequential models: 2 buffers (ping-pong) is enough
-     * For models with skip connections: need 3+ buffers
-     *
-     * Try progressively smaller allocations:
-     * 1. 3 buffers at max size
-     * 2. 2 buffers at max size
-     * 3. 2 buffers with limited size (tile if needed)
-     */
-    size_t num_buffers = 3;
-    size_t buffer_size = max_tensor_size;
-    size_t total_buffer = buffer_size * num_buffers;
-
-    fprintf(stderr, "Mars: Max tensor size: %zu, DDR remaining: %zu\n",
-            max_tensor_size, ddr_remaining);
+    fprintf(stderr, "Mars: Max intermediate tensor: %zu bytes\n", max_intermediate_size);
 
     /*
-     * Calculate I/O buffer needs first (for input, output, and final concat input tensors).
-     * These need dedicated memory that won't be overwritten.
+     * DYNAMIC ALLOCATION via nna_malloc_phys()
+     * Each tensor gets its own allocation from the nmem pool.
+     * This gives us access to the full ~29MB nmem instead of limited chunks.
      */
-    size_t io_buffer_needed = 0;
+
+    /* Allocate input tensors */
     for (uint32_t n = 0; n < header.num_inputs; n++) {
         uint32_t tid = header.input_tensor_ids[n];
         if (tid >= header.num_tensors) continue;
         mars_runtime_tensor_t *rt = &model->tensors[tid];
         if (rt->desc.data_size > 0) continue;
-        io_buffer_needed += ALIGN_UP(tensor_byte_size(&rt->desc), 64);
-    }
-    for (uint32_t n = 0; n < header.num_outputs; n++) {
-        uint32_t tid = header.output_tensor_ids[n];
-        if (tid >= header.num_tensors) continue;
-        /* Check if output is same as any input */
-        int is_input = 0;
-        for (uint32_t m = 0; m < header.num_inputs; m++) {
-            if (header.input_tensor_ids[m] == tid) { is_input = 1; break; }
-        }
-        if (is_input) continue;
-        mars_runtime_tensor_t *rt = &model->tensors[tid];
-        if (rt->desc.data_size > 0) continue;
-        io_buffer_needed += ALIGN_UP(tensor_byte_size(&rt->desc), 64);
-    }
-    /* Also account for final Concat input tensors (they need dedicated buffers) */
-    for (uint32_t i = 0; i < header.num_layers; i++) {
-        mars_layer_t *layer = &model->layers[i].desc;
-        if (layer->type == MARS_LAYER_CONCAT) {
-            for (uint32_t j = 0; j < layer->num_outputs; j++) {
-                uint32_t out_tid = layer->output_tensor_ids[j];
-                int is_model_output = 0;
-                for (uint32_t k = 0; k < header.num_outputs; k++) {
-                    if (header.output_tensor_ids[k] == out_tid) {
-                        is_model_output = 1;
-                        break;
-                    }
-                }
-                if (is_model_output) {
-                    for (uint32_t inp = 0; inp < layer->num_inputs; inp++) {
-                        uint32_t in_tid = layer->input_tensor_ids[inp];
-                        if (in_tid >= header.num_tensors) continue;
-                        mars_runtime_tensor_t *rt = &model->tensors[in_tid];
-                        if (rt->desc.data_size > 0) continue;
-                        io_buffer_needed += ALIGN_UP(tensor_byte_size(&rt->desc), 64);
-                    }
-                }
-            }
-        }
-    }
-    fprintf(stderr, "Mars: I/O tensors need %zu bytes\n", io_buffer_needed);
 
-    /* Reserve space for I/O tensors, then allocate working buffers from remainder */
-    size_t work_ddr_remaining = ddr_remaining - io_buffer_needed;
-
-    /* Try 3 buffers first */
-    if (total_buffer > work_ddr_remaining) {
-        fprintf(stderr, "Mars: 3 buffers too large (%zu > %zu), trying 2\n",
-                total_buffer, work_ddr_remaining);
-        num_buffers = 2;
-        total_buffer = buffer_size * num_buffers;
-    }
-
-    /* Try 2 buffers */
-    if (total_buffer > work_ddr_remaining) {
-        /* Calculate max buffer size that fits */
-        buffer_size = (work_ddr_remaining / 2) & ~63UL;  /* 64-byte aligned */
-        total_buffer = buffer_size * 2;
-
-        if (buffer_size < 65536) {  /* Minimum 64KB per buffer */
-            fprintf(stderr, "Mars: Out of DDR memory (need 2x%zu, have %zu)\n",
-                    max_tensor_size, work_ddr_remaining);
+        size_t sz = ALIGN_UP(tensor_byte_size(&rt->desc), 64);
+        void *paddr = NULL;
+        rt->vaddr = nna_malloc_phys(sz, &paddr);
+        if (rt->vaddr == NULL) {
+            fprintf(stderr, "Mars: Failed to allocate input tensor %u (%zu bytes)\n", tid, sz);
             free(model->layers);
             free(model->tensors);
             free(model);
             return MARS_ERR_ALLOC_FAILED;
         }
-
-        fprintf(stderr, "Mars: Using reduced buffer size: %zu (max tensor needs %zu)\n",
-                buffer_size, max_tensor_size);
-        fprintf(stderr, "Mars: WARNING - large tensors will need tiling!\n");
-    }
-
-    fprintf(stderr, "Mars: Allocated %zu buffers x %zu bytes = %zu total\n",
-            num_buffers, buffer_size, total_buffer);
-
-    /* Working buffer pointers - store in model for later use */
-    uint8_t *work_buffers[3];
-    for (size_t b = 0; b < num_buffers; b++) {
-        work_buffers[b] = ddr_ptr + b * buffer_size;
-    }
-
-    /*
-     * Allocate dedicated buffers for input/output tensors after working buffers.
-     * This ensures inputs/outputs don't get overwritten during computation.
-     */
-    uint8_t *io_buffer_ptr = ddr_ptr + total_buffer;
-    size_t io_buffer_used = 0;
-
-    /* First pass: allocate input tensors */
-    for (uint32_t n = 0; n < header.num_inputs; n++) {
-        uint32_t tid = header.input_tensor_ids[n];
-        if (tid >= header.num_tensors) continue;
-        mars_runtime_tensor_t *rt = &model->tensors[tid];
-        if (rt->desc.data_size > 0) continue;
-
-        size_t sz = ALIGN_UP(tensor_byte_size(&rt->desc), 64);
-        rt->vaddr = io_buffer_ptr + io_buffer_used;
-        rt->paddr = (void *)((uint8_t *)model->ddr_paddr +
-                             ((uint8_t *)rt->vaddr - (uint8_t *)model->ddr_base));
+        rt->paddr = paddr;
         rt->alloc_size = sz;
-        io_buffer_used += sz;
-        fprintf(stderr, "Mars: Input tensor %u allocated at %p (size=%zu)\n", tid, rt->vaddr, sz);
+        rt->buffer_idx = -1;  /* Dedicated buffer */
+        fprintf(stderr, "Mars: Input tensor %u: %zu bytes at vaddr=%p paddr=%p\n",
+                tid, sz, rt->vaddr, rt->paddr);
     }
 
-    /* Second pass: allocate output tensors (skip if same as input) */
+    /* Allocate output tensors */
     for (uint32_t n = 0; n < header.num_outputs; n++) {
         uint32_t tid = header.output_tensor_ids[n];
         if (tid >= header.num_tensors) continue;
         mars_runtime_tensor_t *rt = &model->tensors[tid];
         if (rt->desc.data_size > 0) continue;
-        if (rt->vaddr != NULL) continue;  /* Already allocated as input */
-
-        size_t sz = ALIGN_UP(tensor_byte_size(&rt->desc), 64);
-        rt->vaddr = io_buffer_ptr + io_buffer_used;
-        rt->paddr = (void *)((uint8_t *)model->ddr_paddr +
-                             ((uint8_t *)rt->vaddr - (uint8_t *)model->ddr_base));
-        rt->alloc_size = sz;
-        io_buffer_used += sz;
-        fprintf(stderr, "Mars: Output tensor %u allocated at %p (size=%zu)\n", tid, rt->vaddr, sz);
-    }
-
-    fprintf(stderr, "Mars: Allocated %zu bytes for I/O tensors\n", io_buffer_used);
-
-    /* Find and allocate tensors that are inputs to the final Concat (output-producing layer).
-     * These tensors need dedicated buffers to avoid being overwritten before the Concat runs. */
-    for (uint32_t i = 0; i < header.num_layers; i++) {
-        mars_layer_t *layer = &model->layers[i].desc;
-
-        /* Check if this layer produces an output tensor */
-        if (layer->type == MARS_LAYER_CONCAT) {
-            for (uint32_t j = 0; j < layer->num_outputs; j++) {
-                uint32_t out_tid = layer->output_tensor_ids[j];
-
-                /* Is this output one of the model outputs? */
-                int is_model_output = 0;
-                for (uint32_t k = 0; k < header.num_outputs; k++) {
-                    if (header.output_tensor_ids[k] == out_tid) {
-                        is_model_output = 1;
-                        break;
-                    }
-                }
-
-                if (is_model_output) {
-                    /* This Concat produces model output - allocate its inputs separately */
-                    fprintf(stderr, "Mars: Final Concat layer %u produces output tensor %u\n", i, out_tid);
-                    for (uint32_t inp = 0; inp < layer->num_inputs; inp++) {
-                        uint32_t in_tid = layer->input_tensor_ids[inp];
-                        if (in_tid >= header.num_tensors) continue;
-
-                        mars_runtime_tensor_t *rt = &model->tensors[in_tid];
-                        if (rt->vaddr != NULL) continue;  /* Already allocated */
-                        if (rt->desc.data_size > 0) continue;  /* Weight tensor */
-
-                        size_t sz = ALIGN_UP(tensor_byte_size(&rt->desc), 64);
-                        rt->vaddr = io_buffer_ptr + io_buffer_used;
-                        rt->paddr = (void *)((uint8_t *)model->ddr_paddr +
-                                             ((uint8_t *)rt->vaddr - (uint8_t *)model->ddr_base));
-                        rt->alloc_size = sz;
-                        io_buffer_used += sz;
-                        fprintf(stderr, "Mars: Final Concat input tensor %u allocated at %p (size=%zu)\n",
-                                in_tid, rt->vaddr, sz);
-                    }
-                }
-            }
-        }
-    }
-
-    /* Third pass: assign remaining tensors to working buffers in round-robin */
-    uint32_t buf_idx = 0;
-    for (uint32_t i = 0; i < header.num_tensors; i++) {
-        mars_runtime_tensor_t *rt = &model->tensors[i];
-
-        /* Skip if already allocated (weights, inputs, outputs, final concat inputs) */
         if (rt->vaddr != NULL) continue;
 
-        /* Check if tensor has weight data (data_size > 0 means it's stored in weights section) */
+        size_t sz = ALIGN_UP(tensor_byte_size(&rt->desc), 64);
+        void *paddr = NULL;
+        rt->vaddr = nna_malloc_phys(sz, &paddr);
+        if (rt->vaddr == NULL) {
+            fprintf(stderr, "Mars: Failed to allocate output tensor %u (%zu bytes)\n", tid, sz);
+            /* TODO: cleanup already allocated tensors */
+            free(model->layers);
+            free(model->tensors);
+            free(model);
+            return MARS_ERR_ALLOC_FAILED;
+        }
+        rt->paddr = paddr;
+        rt->alloc_size = sz;
+        rt->buffer_idx = -1;
+        fprintf(stderr, "Mars: Output tensor %u: %zu bytes at vaddr=%p paddr=%p\n",
+                tid, sz, rt->vaddr, rt->paddr);
+    }
+
+    /* Allocate long-lived intermediate tensors (skip connections) */
+    uint32_t skip_alloc_count = 0;
+    for (uint32_t i = 0; i < header.num_tensors; i++) {
+        mars_runtime_tensor_t *rt = &model->tensors[i];
+        if (rt->vaddr != NULL) continue;  /* Already allocated */
+        if (rt->desc.data_size > 0) continue;  /* Weight tensor */
+        if (rt->produced_at < 0) continue;  /* Input tensor */
+        if (rt->last_used_at < 0) continue;  /* Output tensor */
+
+        int32_t span = rt->last_used_at - rt->produced_at;
+        if (span > LONG_LIVED_THRESHOLD) {
+            size_t sz = ALIGN_UP(tensor_byte_size(&rt->desc), 64);
+            void *paddr = NULL;
+            rt->vaddr = nna_malloc_phys(sz, &paddr);
+            if (rt->vaddr == NULL) {
+                fprintf(stderr, "Mars: Failed to allocate skip tensor %u (%zu bytes)\n", i, sz);
+                /* TODO: cleanup already allocated tensors */
+                free(model->layers);
+                free(model->tensors);
+                free(model);
+                return MARS_ERR_ALLOC_FAILED;
+            }
+            rt->paddr = paddr;
+            rt->alloc_size = sz;
+            rt->buffer_idx = -1;
+            skip_alloc_count++;
+        }
+    }
+    fprintf(stderr, "Mars: Allocated %u skip-connection tensors\n", skip_alloc_count);
+
+    /* Allocate working buffers for short-lived tensors */
+    size_t buffer_size = ALIGN_UP(max_intermediate_size, 64);
+    if (buffer_size < 256 * 1024) buffer_size = 256 * 1024;  /* 256KB minimum */
+
+    model->num_work_buffers = MARS_MAX_WORK_BUFFERS;
+    model->work_buffer_size = buffer_size;
+
+    for (uint32_t b = 0; b < model->num_work_buffers; b++) {
+        void *paddr = NULL;
+        model->work_buffers[b] = nna_malloc_phys(buffer_size, &paddr);
+        if (model->work_buffers[b] == NULL) {
+            fprintf(stderr, "Mars: Failed to allocate working buffer %u (%zu bytes)\n", b, buffer_size);
+            /* TODO: cleanup already allocated */
+            free(model->layers);
+            free(model->tensors);
+            free(model);
+            return MARS_ERR_ALLOC_FAILED;
+        }
+        model->work_buffers_paddr[b] = paddr;
+        model->buffer_tensor[b] = -1;  /* Initially free */
+    }
+    fprintf(stderr, "Mars: Allocated %u working buffers of %zu bytes each\n",
+            model->num_work_buffers, buffer_size);
+
+    /* Assign weight tensors - these have fixed memory from the weights section */
+    for (uint32_t i = 0; i < header.num_tensors; i++) {
+        mars_runtime_tensor_t *rt = &model->tensors[i];
+        if (rt->vaddr != NULL) continue;  /* Already allocated */
         if (rt->desc.data_size > 0) {
+            /* Weight tensor - assign from weights section */
             rt->vaddr = (uint8_t *)model->ddr_base + rt->desc.data_offset;
             rt->paddr = (uint8_t *)model->ddr_paddr + rt->desc.data_offset;
             rt->alloc_size = rt->desc.data_size;
-            continue;
+            rt->buffer_idx = -1;  /* Dedicated (weight) buffer */
         }
-
-        /* Assign to working buffer (round-robin) */
-        rt->vaddr = (void *)work_buffers[buf_idx % num_buffers];
-        rt->paddr = (void *)((uint8_t *)model->ddr_paddr +
-                             ((uint8_t *)rt->vaddr - (uint8_t *)model->ddr_base));
-        rt->alloc_size = buffer_size;
-        buf_idx++;
+        /* Short-lived intermediate tensors will be assigned dynamically during execution */
     }
 
-    fprintf(stderr, "Mars: Allocated %u tensors using %zu working buffers\n",
-            header.num_tensors, num_buffers);
+    fprintf(stderr, "Mars: Using dynamic nna_malloc() for tensor allocation\n");
+    fprintf(stderr, "Mars: %u working buffers available for short-lived tensors\n",
+            model->num_work_buffers);
 
 #if USE_MXU
     /* Initialize MXU for compute operations */
@@ -531,6 +476,30 @@ mars_error_t mars_load_file(const char *path, mars_model_t **model) {
 
 void mars_free(mars_model_t *model) {
     if (!model) return;
+
+    /* Free dynamically allocated tensors (I/O, skip connections, runtime) */
+    for (uint32_t i = 0; i < model->header.num_tensors; i++) {
+        mars_runtime_tensor_t *rt = &model->tensors[i];
+        /* buffer_idx == -1 means dedicated buffer via nna_malloc
+         * buffer_idx == -3 means runtime dynamic allocation
+         * Skip weight tensors (they point into DDR weight section) */
+        if (rt->vaddr != NULL && rt->desc.data_size == 0 &&
+            (rt->buffer_idx == -1 || rt->buffer_idx == -3)) {
+            /* Don't free if it's part of the weights DDR block */
+            if (rt->vaddr < model->ddr_base ||
+                rt->vaddr >= (uint8_t*)model->ddr_base + model->ddr_size) {
+                nna_free(rt->vaddr);
+            }
+        }
+    }
+
+    /* Free working buffers */
+    for (uint32_t b = 0; b < model->num_work_buffers; b++) {
+        if (model->work_buffers[b] != NULL) {
+            nna_free(model->work_buffers[b]);
+        }
+    }
+
     free(model->layers);
     free(model->tensors);
     free(model);
@@ -580,22 +549,152 @@ void mars_print_summary(mars_model_t *model) {
 /* Forward declaration for layer execution */
 static mars_error_t execute_layer(mars_model_t *model, mars_runtime_layer_t *layer);
 
+/*
+ * Dynamic buffer assignment: Find a free buffer for a tensor at the given layer
+ *
+ * A buffer is "free" if:
+ * - It has never been used (buffer_tensor[b] == -1), OR
+ * - The tensor it holds is "dead" (last_used_at < current_layer_idx)
+ *
+ * We also must avoid buffers that hold any input to the current layer.
+ */
+static int find_free_buffer(mars_model_t *model, uint32_t layer_idx, mars_layer_t *layer) {
+    /* First, build a set of buffer indices that are "forbidden" (holding layer inputs) */
+    int forbidden[MARS_MAX_WORK_BUFFERS] = {0};
+
+    for (uint32_t i = 0; i < layer->num_inputs; i++) {
+        uint32_t tid = layer->input_tensor_ids[i];
+        if (tid >= model->header.num_tensors) continue;
+        mars_runtime_tensor_t *rt = &model->tensors[tid];
+        if (rt->buffer_idx >= 0 && rt->buffer_idx < (int8_t)model->num_work_buffers) {
+            forbidden[rt->buffer_idx] = 1;
+        }
+    }
+
+    /* Find a buffer that is not forbidden and is either free or holds a dead tensor */
+    for (uint32_t b = 0; b < model->num_work_buffers; b++) {
+        if (forbidden[b]) continue;
+
+        int32_t held_tensor = model->buffer_tensor[b];
+        if (held_tensor < 0) {
+            /* Buffer never used - it's free */
+            return (int)b;
+        }
+
+        /* Check if the held tensor is dead (last_used_at < current layer) */
+        mars_runtime_tensor_t *held_rt = &model->tensors[held_tensor];
+        if (held_rt->last_used_at < (int32_t)layer_idx) {
+            /* Tensor is dead - buffer is available */
+            return (int)b;
+        }
+    }
+
+    /* No free buffer found - this shouldn't happen with proper liveness analysis */
+    return -1;
+}
+
+/*
+ * Assign buffers to output tensors before layer execution
+ * Uses dynamic allocation via nna_malloc_phys() when working buffers are full
+ */
+static void assign_output_buffers(mars_model_t *model, uint32_t layer_idx) {
+    mars_layer_t *layer = &model->layers[layer_idx].desc;
+
+    for (uint32_t o = 0; o < layer->num_outputs; o++) {
+        uint32_t tid = layer->output_tensor_ids[o];
+        if (tid >= model->header.num_tensors) continue;
+
+        mars_runtime_tensor_t *rt = &model->tensors[tid];
+
+        /* Skip if already has dedicated memory (I/O or weight tensor) */
+        if (rt->vaddr != NULL) continue;
+
+        /* Try to find a free working buffer first */
+        int buf_idx = find_free_buffer(model, layer_idx, layer);
+        if (buf_idx >= 0) {
+            /* Assign the working buffer */
+            rt->vaddr = model->work_buffers[buf_idx];
+            rt->paddr = model->work_buffers_paddr[buf_idx];
+            rt->alloc_size = model->work_buffer_size;
+            rt->buffer_idx = (int8_t)buf_idx;
+            model->buffer_tensor[buf_idx] = (int32_t)tid;
+        } else {
+            /* No free working buffer - allocate dynamically */
+            size_t sz = ALIGN_UP(tensor_byte_size(&rt->desc), 64);
+            void *paddr = NULL;
+            rt->vaddr = nna_malloc_phys(sz, &paddr);
+            if (rt->vaddr == NULL) {
+                fprintf(stderr, "Mars: ERROR - Failed to allocate tensor %u (%zu bytes) at layer %u!\n",
+                        tid, sz, layer_idx);
+                return;
+            }
+            rt->paddr = paddr;
+            rt->alloc_size = sz;
+            rt->buffer_idx = -3;  /* Mark as dynamically allocated at runtime */
+        }
+    }
+}
+
+/*
+ * Free dynamically allocated tensors that are no longer needed after a layer
+ */
+static void free_dead_tensors(mars_model_t *model, uint32_t layer_idx) {
+    for (uint32_t i = 0; i < model->header.num_tensors; i++) {
+        mars_runtime_tensor_t *rt = &model->tensors[i];
+
+        /* Only free tensors that were dynamically allocated at runtime */
+        if (rt->buffer_idx != -3) continue;
+
+        /* Check if this tensor is now dead (last_used_at <= current layer) */
+        if (rt->last_used_at >= 0 && rt->last_used_at <= (int32_t)layer_idx) {
+            /* This tensor is no longer needed - free it */
+            nna_free(rt->vaddr);
+            rt->vaddr = NULL;
+            rt->paddr = NULL;
+            rt->alloc_size = 0;
+            rt->buffer_idx = -1;
+        }
+    }
+}
+
 mars_error_t mars_run(mars_model_t *model) {
     if (!model) return MARS_ERR_INVALID_FILE;
 
-    /* Reset execution flags */
+    /* Reset execution flags and buffer assignments */
     for (uint32_t i = 0; i < model->header.num_layers; i++) {
         model->layers[i].is_executed = false;
     }
 
-    /* Execute layers in order */
+    /* Reset working buffer tracking */
+    for (uint32_t b = 0; b < model->num_work_buffers; b++) {
+        model->buffer_tensor[b] = -1;  /* All buffers free */
+    }
+
+    /* Reset intermediate tensor assignments (keep I/O and weight assignments) */
+    for (uint32_t i = 0; i < model->header.num_tensors; i++) {
+        mars_runtime_tensor_t *rt = &model->tensors[i];
+        if (rt->buffer_idx >= 0) {
+            /* This was a dynamically assigned tensor - clear it */
+            rt->vaddr = NULL;
+            rt->paddr = NULL;
+            rt->buffer_idx = -1;
+        }
+    }
+
+    /* Execute layers in order with dynamic buffer assignment */
     for (uint32_t i = 0; i < model->header.num_layers; i++) {
+        /* Dynamically assign output buffers for this layer */
+        assign_output_buffers(model, i);
+
         mars_error_t err = execute_layer(model, &model->layers[i]);
         if (err != MARS_OK) {
             fprintf(stderr, "Mars: Layer %u execution failed\n", i);
             return err;
         }
         model->layers[i].is_executed = true;
+
+        /* Free dynamically allocated tensors that are no longer needed */
+        free_dead_tensors(model, i);
     }
 
     model->inference_count++;
@@ -834,9 +933,20 @@ static mars_error_t execute_conv2d(mars_model_t *model, mars_runtime_layer_t *la
             first_conv = 0;
         }
 
-        /* Debug: also print last few conv outputs */
+        /* Debug: also print convs 1-2 and last few conv outputs */
         static int conv_idx = 0;
         conv_idx++;
+        if (conv_idx == 2) {  /* Second conv (after SiLU) */
+            printf("  [DEBUG Conv1] Input first 16 (expect SiLU output): ");
+            int8_t *in_ptr = (int8_t *)input->vaddr;
+            for (int i = 0; i < 16; i++) printf("%d ", in_ptr[i]);
+            printf("\n");
+            printf("  [DEBUG Conv1] Reference SiLU @ [0,0]: [19, 5, 14, 3, 9, -1, 6, 3, 16, -1, 19, 19, 0, -1, 32, 8]\n");
+            printf("  [DEBUG Conv1] Output first 16 bytes: ");
+            int8_t *out_ptr = (int8_t *)output->vaddr;
+            for (int i = 0; i < 16; i++) printf("%d ", out_ptr[i]);
+            printf("\n");
+        }
         if (conv_idx >= 55 && conv_idx <= 60) {  /* Last few convs */
             printf("  [DEBUG Conv%d] Output first 16 bytes: ", conv_idx);
             int8_t *out_ptr = (int8_t *)output->vaddr;
@@ -918,6 +1028,8 @@ static mars_runtime_tensor_t* get_tensor_by_id(mars_model_t *model, uint32_t id)
 /* Execute Sigmoid: out = 1 / (1 + exp(-x)) */
 static mars_error_t execute_sigmoid(mars_model_t *model, mars_runtime_layer_t *layer) {
     const mars_layer_t *desc = &layer->desc;
+    static int sigmoid_count = 0;
+    sigmoid_count++;
 
     mars_runtime_tensor_t *input = get_tensor_by_id(model, desc->input_tensor_ids[0]);
     mars_runtime_tensor_t *output = get_tensor_by_id(model, desc->output_tensor_ids[0]);
@@ -962,12 +1074,24 @@ static mars_error_t execute_sigmoid(mars_model_t *model, mars_runtime_layer_t *l
         out[i] = (int8_t)q;
     }
 
+    /* Debug first sigmoid */
+    if (sigmoid_count == 1) {
+        fprintf(stderr, "  [Sigmoid #1] in_scale=%f, out_scale=%f\n", in_scale, out_scale);
+        fprintf(stderr, "    Input first 16: ");
+        for (int i = 0; i < 16 && i < (int)numel; i++) fprintf(stderr, "%d ", in[i]);
+        fprintf(stderr, "\n    Output first 16: ");
+        for (int i = 0; i < 16 && i < (int)numel; i++) fprintf(stderr, "%d ", out[i]);
+        fprintf(stderr, "\n");
+    }
+
     return MARS_OK;
 }
 
 /* Execute element-wise Mul: out = a * b */
 static mars_error_t execute_mul(mars_model_t *model, mars_runtime_layer_t *layer) {
     const mars_layer_t *desc = &layer->desc;
+    static int mul_count = 0;
+    mul_count++;
 
     mars_runtime_tensor_t *input_a = get_tensor_by_id(model, desc->input_tensor_ids[0]);
     mars_runtime_tensor_t *input_b = get_tensor_by_id(model, desc->input_tensor_ids[1]);
@@ -1023,10 +1147,25 @@ static mars_error_t execute_mul(mars_model_t *model, mars_runtime_layer_t *layer
         float va = a[i] * scale_a;
         float vb = b[i] * scale_b;
         float y = va * vb;
-        int32_t q = (int32_t)(y * inv_scale_out + 0.5f);
+        int32_t q = (int32_t)roundf(y * inv_scale_out);
         if (q > 127) q = 127;
         if (q < -128) q = -128;
         out[i] = (int8_t)q;
+    }
+
+    /* Debug first Mul (SiLU) */
+    if (mul_count == 1) {
+        fprintf(stderr, "  [Mul #1 SiLU] scale_a=%f, scale_b=%f, scale_out=%f\n",
+                scale_a, scale_b, scale_out);
+        fprintf(stderr, "    Input A first 16: ");
+        for (int i = 0; i < 16 && i < (int)numel; i++) fprintf(stderr, "%d ", a[i]);
+        fprintf(stderr, "\n    Input B first 16: ");
+        for (int i = 0; i < 16 && i < (int)numel; i++) fprintf(stderr, "%d ", b[i]);
+        fprintf(stderr, "\n    Output first 16: ");
+        for (int i = 0; i < 16 && i < (int)numel; i++) fprintf(stderr, "%d ", out[i]);
+        fprintf(stderr, "\n");
+        /* Also show expected reference value:
+         * Reference SiLU output @ pos[0,0]: [19, 5, 14, 3, 9, -1, 6, 3, 16, -1, 19, 19, 0, -1, 32, 8] */
     }
 
     return MARS_OK;
@@ -1090,7 +1229,7 @@ static mars_error_t execute_add(mars_model_t *model, mars_runtime_layer_t *layer
         float va = a[i] * scale_a;
         float vb = b[i] * scale_b;
         float y = va + vb;
-        int32_t q = (int32_t)(y * inv_scale_out + 0.5f);
+        int32_t q = (int32_t)roundf(y * inv_scale_out);
         if (q > 127) q = 127;
         if (q < -128) q = -128;
         out[i] = (int8_t)q;
@@ -1167,20 +1306,34 @@ static mars_error_t execute_concat(mars_model_t *model, mars_runtime_layer_t *la
     int8_t *out = (int8_t *)output->vaddr;
     uint32_t axis = params->axis;
 
-    /* Debug: print Concat info for the final output Concat (axis=1, 3 inputs, large output) */
-    int32_t out_shape1 = output->desc.shape[1];
-    if (axis == 1 && desc->num_inputs == 3 && out_shape1 > 20000) {
-        fprintf(stderr, "  [DEBUG] Final Concat: axis=%u, num_inputs=%u, output_id=%u\n",
-                axis, desc->num_inputs, desc->output_tensor_ids[0]);
-        for (uint32_t n = 0; n < desc->num_inputs; n++) {
+    /* Debug: count concats to identify FPN layers */
+    static int concat_count = 0;
+    concat_count++;
+
+    /* Debug: print key FPN Concat layers */
+    /* In NHWC YOLOv5n:
+     * Concat around layer 44-45: 80x80 first FPN (model.17)
+     * Concat around layer 52-53: 40x40 second FPN (model.20)
+     * Concat around layer 59-60: 20x20 third FPN (model.23)
+     */
+    int32_t out_h = output->desc.shape[1];
+    int32_t out_w = output->desc.shape[2];
+    int32_t out_c = output->desc.shape[3];
+
+    if (out_c >= 64 && out_c <= 256) {  /* FPN layer candidates */
+        fprintf(stderr, "  [Concat #%d] axis=%u, output shape=[%d,%d,%d,%d], out_scale=%f\n",
+                concat_count, axis, output->desc.shape[0], out_h, out_w, out_c, output->desc.scale);
+        /* Print input scales and values to check */
+        for (uint32_t n = 0; n < desc->num_inputs && n < 4; n++) {
             mars_runtime_tensor_t *inp = get_tensor_by_id(model, desc->input_tensor_ids[n]);
             if (inp && inp->vaddr) {
-                int8_t *data = (int8_t *)inp->vaddr;
-                fprintf(stderr, "    Input[%u] id=%u shape=[%d,%d,%d,%d] first16: ",
-                        n, desc->input_tensor_ids[n],
-                        inp->desc.shape[0], inp->desc.shape[1],
-                        inp->desc.shape[2], inp->desc.shape[3]);
-                for (int i = 0; i < 16; i++) fprintf(stderr, "%d ", data[i]);
+                fprintf(stderr, "    Input %d: id=%u, scale=%f, shape=[%d,%d,%d,%d]\n",
+                        n, inp->desc.id, inp->desc.scale,
+                        inp->desc.shape[0], inp->desc.shape[1], inp->desc.shape[2], inp->desc.shape[3]);
+                /* Print first 16 values of this input at position [0,0] */
+                int8_t *inp_data = (int8_t *)inp->vaddr;
+                fprintf(stderr, "      Input values @ [0,0] first 16: ");
+                for (int i = 0; i < 16; i++) fprintf(stderr, "%d ", inp_data[i]);
                 fprintf(stderr, "\n");
             }
         }
@@ -1213,12 +1366,18 @@ static mars_error_t execute_concat(mars_model_t *model, mars_runtime_layer_t *la
 
     /* For each input, calculate where it goes in the output */
     int32_t axis_offset = 0;
+    float out_scale = output->desc.scale > 0.0f ? output->desc.scale : 1.0f;
 
     for (uint32_t n = 0; n < desc->num_inputs; n++) {
         mars_runtime_tensor_t *input = get_tensor_by_id(model, desc->input_tensor_ids[n]);
         if (!input || !input->vaddr) continue;
 
         int8_t *in = (int8_t *)input->vaddr;
+        float in_scale = input->desc.scale > 0.0f ? input->desc.scale : 1.0f;
+
+        /* Check if we need to rescale (input and output scales differ significantly) */
+        float scale_ratio = in_scale / out_scale;
+        int needs_rescale = (fabsf(scale_ratio - 1.0f) > 0.01f);
 
         /* Get input shape */
         int32_t in_shape[4];
@@ -1234,20 +1393,39 @@ static mars_error_t execute_concat(mars_model_t *model, mars_runtime_layer_t *la
             in_axis_stride *= in_shape[i];
         }
 
-        /* Copy data */
+        /* Copy data (with optional rescaling) */
         /* For each position in the outer dimensions */
         for (int64_t outer = 0; outer < outer_count; outer++) {
             /* For each position along the axis in this input */
             for (int32_t a = 0; a < in_axis_size; a++) {
-                /* Copy the inner slice */
+                /* Calculate offsets for this slice */
                 int64_t in_offset = outer * (in_axis_size * in_axis_stride) + a * in_axis_stride;
                 int64_t out_offset = outer * (out_shape[axis] * axis_stride) + (axis_offset + a) * axis_stride;
 
-                memcpy(out + out_offset, in + in_offset, axis_stride);
+                if (needs_rescale) {
+                    /* Rescale each element from input scale to output scale */
+                    for (int64_t j = 0; j < axis_stride; j++) {
+                        float val = in[in_offset + j] * scale_ratio;
+                        int32_t q = (int32_t)roundf(val);
+                        if (q > 127) q = 127;
+                        if (q < -128) q = -128;
+                        out[out_offset + j] = (int8_t)q;
+                    }
+                } else {
+                    /* Direct copy - scales match */
+                    memcpy(out + out_offset, in + in_offset, axis_stride);
+                }
             }
         }
 
         axis_offset += in_axis_size;
+    }
+
+    /* Debug: print concat output for FPN layers */
+    if (out_c >= 64 && out_c <= 256) {
+        fprintf(stderr, "    Output first 16 NHWC: ");
+        for (int i = 0; i < 16; i++) fprintf(stderr, "%d ", out[i]);
+        fprintf(stderr, "\n");
     }
 
     return MARS_OK;

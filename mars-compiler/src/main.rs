@@ -952,11 +952,15 @@ impl MarsCompiler {
             if let Some(out_scale) = self.get_qdq_scale(output_name) {
                 // Use calibrated scale from QDQ model
                 self.set_tensor_scale(output_id, out_scale);
-                if self.verbose && layer_id < 5 {
+                if self.verbose && layer_id < 10 {
                     let in_scale = self.get_tensor_scale(input_id);
+                    let in_tensor = self.tensors.get(input_id as usize);
+                    let in_name = in_tensor.map(|t| t.name.as_str()).unwrap_or("?");
                     let combined = (in_scale * scale) / out_scale;
-                    println!("  Conv[{}] QDQ scales: in={:.6} w={:.6} out={:.6} -> combined={:.6}",
-                             layer_id, in_scale, scale, out_scale, combined);
+                    println!("  Conv[{}] input='{}' (id={}, scale={:.6}) -> '{}'",
+                             layer_id, in_name, input_id, in_scale, output_name);
+                    println!("    QDQ: w={:.6} out={:.6} -> combined={:.6}",
+                             scale, out_scale, combined);
                 }
             } else {
                 // Fallback: conservative heuristic to prevent overflow
@@ -1259,16 +1263,29 @@ impl MarsCompiler {
         if self.quantize {
             let scale_a = self.get_tensor_scale(input_a_id);
             let scale_b = self.get_tensor_scale(input_b_id);
-            let out_scale = match layer_type {
-                LayerType::Add => scale_a.max(scale_b),  // Use max for add
-                LayerType::Mul => {
-                    // For Mul: if one input has default scale (1.0), use the other
-                    // This handles constant multipliers (strides, grid offsets, etc.)
-                    if (scale_a - 1.0).abs() < 0.001 { scale_b }
-                    else if (scale_b - 1.0).abs() < 0.001 { scale_a }
-                    else { scale_a.min(scale_b) }  // Both non-default: use smaller
-                },
-                _ => scale_a,
+
+            // First try to get QDQ calibrated output scale
+            let out_scale = if let Some(qdq_scale) = self.get_qdq_scale(output_name) {
+                if self.verbose && layer_id < 5 {
+                    println!("  {:?}[{}] '{}' QDQ out_scale={:.6}", layer_type, layer_id, output_name, qdq_scale);
+                }
+                qdq_scale
+            } else {
+                // Fallback to heuristic
+                let heuristic = match layer_type {
+                    LayerType::Add => scale_a.max(scale_b),
+                    LayerType::Mul => {
+                        if (scale_a - 1.0).abs() < 0.001 { scale_b }
+                        else if (scale_b - 1.0).abs() < 0.001 { scale_a }
+                        else { scale_a.min(scale_b) }
+                    },
+                    _ => scale_a,
+                };
+                if self.verbose && layer_id < 5 {
+                    println!("  {:?}[{}] '{}' heuristic out_scale={:.6} (in_a={:.6}, in_b={:.6})",
+                             layer_type, layer_id, output_name, heuristic, scale_a, scale_b);
+                }
+                heuristic
             };
             self.set_tensor_scale(output_id, out_scale);
         }

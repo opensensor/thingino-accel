@@ -35,6 +35,11 @@ typedef struct {
     void *paddr;                 /* Physical address (NNA accessible) */
     size_t alloc_size;           /* Allocated size (may be larger due to alignment) */
     bool is_external;            /* True if memory is externally managed */
+
+    /* Liveness tracking for dynamic buffer allocation */
+    int32_t produced_at;         /* Layer index where this tensor is produced (-1 = input/weight) */
+    int32_t last_used_at;        /* Layer index where this tensor is last consumed (-1 = output) */
+    int8_t  buffer_idx;          /* Working buffer index (-1 = dedicated buffer) */
 } mars_runtime_tensor_t;
 
 /* Runtime layer */
@@ -42,6 +47,9 @@ typedef struct {
     mars_layer_t desc;           /* Layer descriptor from file */
     bool is_executed;            /* Track if layer has been executed this run */
 } mars_runtime_layer_t;
+
+/* Maximum working buffers for dynamic allocation */
+#define MARS_MAX_WORK_BUFFERS 4
 
 /* Runtime model context */
 typedef struct {
@@ -60,6 +68,13 @@ typedef struct {
     /* Weight data (loaded from file) */
     void *weights;
     size_t weights_size;
+
+    /* Working buffer management for dynamic allocation */
+    void *work_buffers[MARS_MAX_WORK_BUFFERS];  /* Working buffer virtual addresses */
+    void *work_buffers_paddr[MARS_MAX_WORK_BUFFERS]; /* Working buffer physical addresses */
+    size_t work_buffer_size;     /* Size of each working buffer */
+    uint32_t num_work_buffers;   /* Number of working buffers allocated */
+    int32_t buffer_tensor[MARS_MAX_WORK_BUFFERS]; /* Which tensor is currently in each buffer (-1 = free) */
 
     /* Statistics */
     uint64_t total_inference_us;
