@@ -418,6 +418,9 @@ static int decode_head(const int8_t* data, float scale, int scale_idx,
                     }
                 }
 
+                // Filter: only person (0), cat (15), dog (16)
+                if (best_class != 0 && best_class != 15 && best_class != 16) continue;
+
                 float class_conf = sigmoid(best_score);
                 float final_conf = obj_conf * class_conf;
                 if (final_conf < CONF_THRESHOLD) continue;

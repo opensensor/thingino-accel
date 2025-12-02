@@ -1,7 +1,8 @@
-//! Mars Compiler - ONNX to Mars format converter
+//! Mars Compiler - ONNX/Darknet to Mars format converter
 //!
-//! Compiles ONNX models to .mars format for Ingenic T41 NNA
+//! Compiles ONNX and Darknet models to .mars format for Ingenic T41 NNA
 
+mod darknet_parser;
 mod mars_format;
 mod onnx_parser;
 
@@ -13,6 +14,7 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 
+use darknet_parser::{DarknetConfig, DarknetLayerType, DarknetModel};
 use mars_format::*;
 use onnx_parser::{OnnxModel, OnnxNode, TensorDataType};
 
@@ -47,10 +49,10 @@ fn half_to_f32(bits: u16) -> f32 {
 
 #[derive(Parser, Debug)]
 #[command(name = "mars")]
-#[command(about = "Compile ONNX models to Mars format for Ingenic T41 NNA")]
+#[command(about = "Compile ONNX/Darknet models to Mars format for Ingenic T41 NNA")]
 #[command(version)]
 struct Args {
-    /// Input ONNX model file
+    /// Input model file (ONNX or Darknet .weights/.sod)
     #[arg(short, long)]
     input: PathBuf,
 
@@ -66,6 +68,12 @@ struct Args {
     /// Default is NCHW (channels-first, ONNX native)
     #[arg(long)]
     nhwc: bool,
+
+    /// Darknet architecture (for .weights/.sod files)
+    /// Built-in: :face, :tiny
+    /// Or path to .cfg file
+    #[arg(long)]
+    darknet: Option<String>,
 
     /// Verbose output
     #[arg(short, long)]
@@ -1850,6 +1858,451 @@ impl MarsCompiler {
     }
 }
 
+/// Compiler for Darknet/SOD models
+struct DarknetMarsCompiler {
+    model: DarknetModel,
+    tensors: Vec<MarsTensor>,
+    layers: Vec<MarsLayer>,
+    weights_data: Vec<u8>,
+    quantize: bool,
+    use_nhwc: bool,
+    verbose: bool,
+}
+
+impl DarknetMarsCompiler {
+    fn new(model: DarknetModel, quantize: bool, use_nhwc: bool, verbose: bool) -> Self {
+        Self {
+            model,
+            tensors: Vec::new(),
+            layers: Vec::new(),
+            weights_data: Vec::new(),
+            quantize,
+            use_nhwc,
+            verbose,
+        }
+    }
+
+    fn compile(&mut self) -> Result<()> {
+        // Clone config to avoid borrow issues
+        let width = self.model.config.width;
+        let height = self.model.config.height;
+        let channels = self.model.config.channels;
+        let layers: Vec<_> = self.model.config.layers.clone();
+
+        // Create input tensor
+        let input_id = 0u32;
+        let mut input_tensor = MarsTensor::new(input_id, "input");
+        input_tensor.ndims = 4;
+        if self.use_nhwc {
+            input_tensor.shape[0] = 1;
+            input_tensor.shape[1] = height as i32;
+            input_tensor.shape[2] = width as i32;
+            input_tensor.shape[3] = channels as i32;
+            input_tensor.format = DataFormat::Nhwc;
+        } else {
+            input_tensor.shape[0] = 1;
+            input_tensor.shape[1] = channels as i32;
+            input_tensor.shape[2] = height as i32;
+            input_tensor.shape[3] = width as i32;
+            input_tensor.format = DataFormat::Nchw;
+        }
+        input_tensor.dtype = if self.quantize { DataType::Int8 } else { DataType::Float32 };
+        input_tensor.scale = if self.quantize { 1.0 / 255.0 } else { 1.0 };
+        self.tensors.push(input_tensor);
+
+        // Track current feature map dimensions
+        let mut in_channels = channels;
+        let mut in_h = height;
+        let mut in_w = width;
+        let mut prev_tensor_id = input_id;
+
+        // Process each layer
+        for (layer_idx, layer) in layers.iter().enumerate() {
+            match layer.layer_type {
+                DarknetLayerType::Convolutional => {
+                    let (out_tensor_id, out_h, out_w) = self.add_conv_layer(
+                        layer_idx, layer, prev_tensor_id, in_channels, in_h, in_w
+                    )?;
+                    prev_tensor_id = out_tensor_id;
+                    in_channels = layer.filters;
+                    in_h = out_h;
+                    in_w = out_w;
+                }
+                DarknetLayerType::MaxPool => {
+                    let (out_tensor_id, out_h, out_w) = self.add_pool_layer(
+                        layer_idx, layer, prev_tensor_id, in_channels, in_h, in_w
+                    )?;
+                    prev_tensor_id = out_tensor_id;
+                    in_h = out_h;
+                    in_w = out_w;
+                }
+                DarknetLayerType::Region | DarknetLayerType::Yolo => {
+                    // Detection layer - just mark output
+                    if self.verbose {
+                        println!("  Layer {}: Region/YOLO (detection output)", layer_idx);
+                    }
+                }
+                _ => {
+                    if self.verbose {
+                        println!("  Layer {}: Skipping {:?}", layer_idx, layer.layer_type);
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn add_conv_layer(
+        &mut self,
+        layer_idx: usize,
+        layer: &darknet_parser::DarknetLayer,
+        input_id: u32,
+        in_channels: u32,
+        in_h: u32,
+        in_w: u32,
+    ) -> Result<(u32, u32, u32)> {
+        let mars_layer_id = self.layers.len() as u32;
+
+        // Calculate output dimensions
+        let out_h = if layer.pad > 0 {
+            (in_h + layer.stride - 1) / layer.stride
+        } else {
+            (in_h - layer.size) / layer.stride + 1
+        };
+        let out_w = if layer.pad > 0 {
+            (in_w + layer.stride - 1) / layer.stride
+        } else {
+            (in_w - layer.size) / layer.stride + 1
+        };
+
+        // Create output tensor
+        let output_id = self.tensors.len() as u32;
+        let mut output_tensor = MarsTensor::new(output_id, &format!("conv{}_out", layer_idx));
+        output_tensor.ndims = 4;
+        if self.use_nhwc {
+            output_tensor.shape[0] = 1;
+            output_tensor.shape[1] = out_h as i32;
+            output_tensor.shape[2] = out_w as i32;
+            output_tensor.shape[3] = layer.filters as i32;
+            output_tensor.format = DataFormat::Nhwc;
+        } else {
+            output_tensor.shape[0] = 1;
+            output_tensor.shape[1] = layer.filters as i32;
+            output_tensor.shape[2] = out_h as i32;
+            output_tensor.shape[3] = out_w as i32;
+            output_tensor.format = DataFormat::Nchw;
+        }
+        output_tensor.dtype = if self.quantize { DataType::Int8 } else { DataType::Float32 };
+
+        // For quantized models, estimate output scale based on typical activation range
+        // LeakyReLU networks typically have activations in [-4, 4] range after normalization
+        // Use a conservative estimate: scale = 4.0/127 ≈ 0.0315
+        // For the final layer (linear activation), use a larger range for YOLO outputs
+        if self.quantize {
+            if layer.activation == "linear" {
+                // YOLO output layer - raw predictions can be larger
+                output_tensor.scale = 20.0 / 127.0;  // ~0.157, allows [-20, 20] range
+            } else {
+                // LeakyReLU layers - bounded activations
+                output_tensor.scale = 6.0 / 127.0;   // ~0.047, allows [-6, 6] range
+            }
+        }
+
+        self.tensors.push(output_tensor);
+
+        // Get weights from model
+        let layer_weights = &self.model.weights[layer_idx];
+        let n = layer.filters as usize;
+        let c = in_channels as usize;
+        let k = layer.size as usize;
+
+        // Parse weight components
+        let mut offset = 0;
+        let biases: Vec<f32> = layer_weights[offset..offset + n].to_vec();
+        offset += n;
+
+        let (scales, means, variances) = if layer.batch_normalize {
+            let s: Vec<f32> = layer_weights[offset..offset + n].to_vec();
+            offset += n;
+            let m: Vec<f32> = layer_weights[offset..offset + n].to_vec();
+            offset += n;
+            let v: Vec<f32> = layer_weights[offset..offset + n].to_vec();
+            offset += n;
+            (Some(s), Some(m), Some(v))
+        } else {
+            (None, None, None)
+        };
+
+        let weights: Vec<f32> = layer_weights[offset..].to_vec();
+
+        // Fold batch norm into weights if present
+        let (final_weights, final_biases) = if let (Some(scales), Some(means), Some(variances)) = (scales, means, variances) {
+            fold_batchnorm(&weights, &biases, &scales, &means, &variances, n, c, k)
+        } else {
+            (weights, biases)
+        };
+
+        // Quantize and store weights
+        let (weight_data, weight_scale) = if self.quantize {
+            quantize_weights_f32(&final_weights)
+        } else {
+            (f32_to_bytes(&final_weights), 1.0)
+        };
+        let weight_offset = self.weights_data.len() as u64;
+        self.weights_data.extend(&weight_data);
+        let weight_size = weight_data.len() as u64;
+
+        // Create weight tensor
+        let weight_tensor_id = self.tensors.len() as u32;
+        let mut w_tensor = MarsTensor::new(weight_tensor_id, &format!("conv{}_weight", layer_idx));
+        w_tensor.dtype = if self.quantize { DataType::Int8 } else { DataType::Float32 };
+        w_tensor.format = DataFormat::Oihw;
+        w_tensor.ndims = 4;
+        w_tensor.shape[0] = n as i32;
+        w_tensor.shape[1] = c as i32;
+        w_tensor.shape[2] = k as i32;
+        w_tensor.shape[3] = k as i32;
+        w_tensor.scale = weight_scale;
+        w_tensor.data_offset = weight_offset;
+        w_tensor.data_size = weight_size;
+        self.tensors.push(w_tensor);
+
+        // Store biases
+        // For INT8 quantization, biases must be INT32 with scale = in_scale * w_scale
+        // This allows direct addition to the INT32 accumulator without additional scaling
+        // Get the actual input tensor's scale (not hardcoded 1/255!)
+        let input_tensor_scale = self.tensors.iter()
+            .find(|t| t.id == input_id)
+            .map(|t| t.scale)
+            .unwrap_or(1.0 / 255.0);
+        let bias_scale = input_tensor_scale * weight_scale;
+
+        let (bias_data, bias_dtype) = if self.quantize {
+            // Quantize biases to INT32: int_bias = float_bias / bias_scale
+            let int_biases: Vec<i32> = final_biases.iter()
+                .map(|&b| (b / bias_scale).round() as i32)
+                .collect();
+            (i32_to_bytes(&int_biases), DataType::Int32)
+        } else {
+            (f32_to_bytes(&final_biases), DataType::Float32)
+        };
+
+        let bias_offset = self.weights_data.len() as u64;
+        self.weights_data.extend(&bias_data);
+        let bias_size = bias_data.len() as u64;
+
+        let bias_tensor_id = self.tensors.len() as u32;
+        let mut b_tensor = MarsTensor::new(bias_tensor_id, &format!("conv{}_bias", layer_idx));
+        b_tensor.dtype = bias_dtype;
+        b_tensor.ndims = 1;
+        b_tensor.shape[0] = n as i32;
+        b_tensor.data_offset = bias_offset;
+        b_tensor.data_size = bias_size;
+        b_tensor.scale = bias_scale;
+        self.tensors.push(b_tensor);
+
+        // Determine activation
+        let activation = match layer.activation.as_str() {
+            "leaky" => Activation::LeakyRelu,
+            "relu" => Activation::Relu,
+            "linear" => Activation::None,
+            _ => Activation::None,
+        };
+
+        // Create Mars layer
+        let mut mars_layer = MarsLayer::new(mars_layer_id, LayerType::Conv2d);
+        mars_layer.num_inputs = 1;
+        mars_layer.num_outputs = 1;
+        mars_layer.input_tensor_ids[0] = input_id;
+        mars_layer.output_tensor_ids[0] = output_id;
+
+        let pad = if layer.pad > 0 { (layer.size - 1) / 2 } else { 0 };
+        mars_layer.params = LayerParams::Conv(ConvParams {
+            kernel_h: layer.size,
+            kernel_w: layer.size,
+            stride_h: layer.stride,
+            stride_w: layer.stride,
+            dilation_h: 1,
+            dilation_w: 1,
+            padding: if pad > 0 { Padding::Same } else { Padding::Valid },
+            pad_top: pad,
+            pad_left: pad,
+            pad_bottom: pad,
+            pad_right: pad,
+            groups: 1,
+            activation,
+            weight_tensor_id,
+            bias_tensor_id,
+        });
+
+        self.layers.push(mars_layer);
+
+        if self.verbose {
+            println!("  Layer {}: Conv {}x{}x{} -> {} ({}x{})",
+                     layer_idx, k, k, c, n, out_h, out_w);
+        }
+
+        Ok((output_id, out_h, out_w))
+    }
+
+    fn add_pool_layer(
+        &mut self,
+        layer_idx: usize,
+        layer: &darknet_parser::DarknetLayer,
+        input_id: u32,
+        in_channels: u32,
+        in_h: u32,
+        in_w: u32,
+    ) -> Result<(u32, u32, u32)> {
+        let mars_layer_id = self.layers.len() as u32;
+
+        let out_h = in_h / layer.stride;
+        let out_w = in_w / layer.stride;
+
+        // Create output tensor
+        let output_id = self.tensors.len() as u32;
+        let mut output_tensor = MarsTensor::new(output_id, &format!("pool{}_out", layer_idx));
+        output_tensor.ndims = 4;
+        if self.use_nhwc {
+            output_tensor.shape[0] = 1;
+            output_tensor.shape[1] = out_h as i32;
+            output_tensor.shape[2] = out_w as i32;
+            output_tensor.shape[3] = in_channels as i32;
+            output_tensor.format = DataFormat::Nhwc;
+        } else {
+            output_tensor.shape[0] = 1;
+            output_tensor.shape[1] = in_channels as i32;
+            output_tensor.shape[2] = out_h as i32;
+            output_tensor.shape[3] = out_w as i32;
+            output_tensor.format = DataFormat::Nchw;
+        }
+        output_tensor.dtype = if self.quantize { DataType::Int8 } else { DataType::Float32 };
+        // Pool preserves scale
+        if let Some(in_tensor) = self.tensors.get(input_id as usize) {
+            output_tensor.scale = in_tensor.scale;
+        }
+        self.tensors.push(output_tensor);
+
+        // Create Mars layer
+        let mut mars_layer = MarsLayer::new(mars_layer_id, LayerType::MaxPool);
+        mars_layer.num_inputs = 1;
+        mars_layer.num_outputs = 1;
+        mars_layer.input_tensor_ids[0] = input_id;
+        mars_layer.output_tensor_ids[0] = output_id;
+
+        mars_layer.params = LayerParams::Pool(PoolParams {
+            kernel_h: layer.size,
+            kernel_w: layer.size,
+            stride_h: layer.stride,
+            stride_w: layer.stride,
+            padding: Padding::Valid,
+            pad_top: 0,
+            pad_bottom: 0,
+            pad_left: 0,
+            pad_right: 0,
+        });
+
+        self.layers.push(mars_layer);
+
+        if self.verbose {
+            println!("  Layer {}: MaxPool {}x{} stride {} -> {}x{}",
+                     layer_idx, layer.size, layer.size, layer.stride, out_h, out_w);
+        }
+
+        Ok((output_id, out_h, out_w))
+    }
+
+    fn write<W: Write>(&self, w: &mut W) -> Result<()> {
+        // Find the output tensor: it's the output of the last layer
+        // (not the last tensor, since weight/bias tensors are added after activations)
+        let output_tensor_id = if !self.layers.is_empty() {
+            self.layers.last().unwrap().output_tensor_ids[0]
+        } else if self.tensors.len() > 1 {
+            // Fallback: last tensor
+            (self.tensors.len() - 1) as u32
+        } else {
+            0
+        };
+
+        let mut header = MarsHeader::new();
+        header.num_tensors = self.tensors.len() as u32;
+        header.num_layers = self.layers.len() as u32;
+        header.num_inputs = 1;
+        header.num_outputs = 1;
+        header.input_tensor_ids[0] = 0;  // First tensor is input
+        header.output_tensor_ids[0] = output_tensor_id;
+        header.weights_offset = HEADER_SIZE as u64
+            + (self.tensors.len() * TENSOR_SIZE) as u64
+            + (self.layers.len() * LAYER_SIZE) as u64;
+        header.weights_size = self.weights_data.len() as u64;
+
+        header.write(w)?;
+
+        for tensor in &self.tensors {
+            tensor.write(w)?;
+        }
+
+        for layer in &self.layers {
+            layer.write(w)?;
+        }
+
+        w.write_all(&self.weights_data)?;
+
+        Ok(())
+    }
+}
+
+/// Fold batch normalization into convolution weights
+fn fold_batchnorm(
+    weights: &[f32],
+    biases: &[f32],
+    scales: &[f32],
+    means: &[f32],
+    variances: &[f32],
+    n: usize,
+    c: usize,
+    k: usize,
+) -> (Vec<f32>, Vec<f32>) {
+    let eps = 1e-5f32;
+    let mut new_weights = vec![0.0f32; weights.len()];
+    let mut new_biases = vec![0.0f32; n];
+
+    for i in 0..n {
+        let scale = scales[i] / (variances[i] + eps).sqrt();
+        new_biases[i] = biases[i] * scale + (0.0 - means[i]) * scale;
+
+        let weights_per_filter = c * k * k;
+        for j in 0..weights_per_filter {
+            new_weights[i * weights_per_filter + j] = weights[i * weights_per_filter + j] * scale;
+        }
+    }
+
+    (new_weights, new_biases)
+}
+
+/// Quantize float32 weights to int8
+fn quantize_weights_f32(weights: &[f32]) -> (Vec<u8>, f32) {
+    let max_abs = weights.iter().map(|f| f.abs()).fold(0.0f32, f32::max);
+    let scale = if max_abs > 0.0 { max_abs / 127.0 } else { 1.0 };
+
+    let quantized: Vec<u8> = weights.iter()
+        .map(|&f| ((f / scale).round().clamp(-127.0, 127.0) as i8) as u8)
+        .collect();
+
+    (quantized, scale)
+}
+
+/// Convert f32 slice to bytes
+fn f32_to_bytes(data: &[f32]) -> Vec<u8> {
+    data.iter().flat_map(|f| f.to_le_bytes()).collect()
+}
+
+/// Convert i32 slice to bytes
+fn i32_to_bytes(data: &[i32]) -> Vec<u8> {
+    data.iter().flat_map(|i| i.to_le_bytes()).collect()
+}
+
 fn main() -> Result<()> {
     let args = Args::parse();
 
@@ -1858,21 +2311,43 @@ fn main() -> Result<()> {
     println!("Output: {}", args.output.display());
     println!();
 
-    // Load ONNX model
-    println!("Loading ONNX model...");
-    let onnx = OnnxModel::load(&args.input)
-        .context("Failed to load ONNX model")?;
+    // Determine if this is a Darknet or ONNX model
+    let is_darknet = args.darknet.is_some() ||
+        args.input.extension().map(|e| e == "sod" || e == "weights").unwrap_or(false);
 
-    // Compile to Mars
-    // If --float32 is specified, don't quantize (keep float32 weights)
     let quantize = !args.float32;
     let use_nhwc = args.nhwc;
     println!("Quantization: {}", if quantize { "INT8" } else { "FLOAT32 (no quantization)" });
     println!("Feature format: {}", if use_nhwc { "NHWC (channels-last)" } else { "NCHW (channels-first)" });
+
+    let (num_layers, num_tensors, weights_size) = if is_darknet {
+        // Darknet/SOD model
+        compile_darknet(&args, quantize, use_nhwc)?
+    } else {
+        // ONNX model
+        compile_onnx(&args, quantize, use_nhwc)?
+    };
+
+    // Summary
+    let file_size = std::fs::metadata(&args.output)?.len();
+    println!("\nCompilation complete!");
+    println!("  Layers:      {}", num_layers);
+    println!("  Tensors:     {}", num_tensors);
+    println!("  Weights:     {} bytes", weights_size);
+    println!("  Output size: {} bytes ({:.2} KB)", file_size, file_size as f64 / 1024.0);
+
+    Ok(())
+}
+
+/// Compile ONNX model to Mars format
+fn compile_onnx(args: &Args, quantize: bool, use_nhwc: bool) -> Result<(usize, usize, usize)> {
+    println!("Loading ONNX model...");
+    let onnx = OnnxModel::load(&args.input)
+        .context("Failed to load ONNX model")?;
+
     let mut compiler = MarsCompiler::new(onnx, quantize, use_nhwc, args.verbose);
     compiler.compile()?;
 
-    // Write output
     println!("\nWriting Mars model...");
     let file = File::create(&args.output)
         .context("Failed to create output file")?;
@@ -1880,13 +2355,44 @@ fn main() -> Result<()> {
     compiler.write(&mut writer)?;
     writer.flush()?;
 
-    // Summary
-    let file_size = std::fs::metadata(&args.output)?.len();
-    println!("\nCompilation complete!");
-    println!("  Layers:      {}", compiler.layers.len());
-    println!("  Tensors:     {}", compiler.tensors.len());
-    println!("  Weights:     {} bytes", compiler.weights_data.len());
-    println!("  Output size: {} bytes ({:.2} KB)", file_size, file_size as f64 / 1024.0);
+    Ok((compiler.layers.len(), compiler.tensors.len(), compiler.weights_data.len()))
+}
 
-    Ok(())
+/// Compile Darknet/SOD model to Mars format
+fn compile_darknet(args: &Args, quantize: bool, use_nhwc: bool) -> Result<(usize, usize, usize)> {
+    // Get architecture config
+    let arch_name = args.darknet.as_deref().unwrap_or(":face");
+    println!("Darknet architecture: {}", arch_name);
+
+    let config = if arch_name.starts_with(':') || !arch_name.contains('.') {
+        // Built-in architecture
+        darknet_parser::get_builtin_config(arch_name)
+            .context(format!("Unknown built-in architecture: {}. Available: :face, :tiny", arch_name))?
+    } else {
+        // Load from .cfg file
+        darknet_parser::parse_darknet_cfg(arch_name)
+            .context(format!("Failed to parse Darknet config: {}", arch_name))?
+    };
+
+    println!("  Input: {}x{}x{}", config.width, config.height, config.channels);
+    println!("  Layers: {}", config.layers.len());
+
+    // Load weights
+    println!("\nLoading Darknet weights...");
+    let model = darknet_parser::load_darknet_weights(&args.input, &config)
+        .context("Failed to load Darknet weights")?;
+
+    // Compile to Mars
+    println!("\nCompiling to Mars format...");
+    let mut compiler = DarknetMarsCompiler::new(model, quantize, use_nhwc, args.verbose);
+    compiler.compile()?;
+
+    println!("\nWriting Mars model...");
+    let file = File::create(&args.output)
+        .context("Failed to create output file")?;
+    let mut writer = BufWriter::new(file);
+    compiler.write(&mut writer)?;
+    writer.flush()?;
+
+    Ok((compiler.layers.len(), compiler.tensors.len(), compiler.weights_data.len()))
 }

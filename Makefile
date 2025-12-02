@@ -133,6 +133,10 @@ $(BIN_DIR)/mars_detect: $(SRC_DIR)/mars/mars_detect.c $(OBJ_DIR)/mars_mars_runti
 	$(CC) $(CFLAGS) $< $(OBJ_DIR)/mars_mars_runtime.o $(MARS_MXU_OBJS) -o $@ $(LDFLAGS) -lnna $(LIBS) -lm
 	@echo "Built Mars detect: $@"
 
+$(BIN_DIR)/mars_face: $(SRC_DIR)/mars/mars_face.c $(OBJ_DIR)/mars_mars_runtime.o $(MARS_MXU_OBJS) $(LIB_NNA_STATIC) | $(BIN_DIR)
+	$(CC) $(CFLAGS) $< $(OBJ_DIR)/mars_mars_runtime.o $(MARS_MXU_OBJS) -o $@ $(LDFLAGS) -lnna $(LIBS) -lm
+	@echo "Built Mars face: $@"
+
 # NNA DMA object
 $(OBJ_DIR)/nna_dma.o: $(SRC_DIR)/nna_dma.c | $(OBJ_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -171,7 +175,16 @@ $(BIN_DIR)/mars_inference_test: $(EXAMPLES_DIR)/mars_inference_test.c $(OBJ_DIR)
 	$(CC) $(CFLAGS) $< $(OBJ_DIR)/mars_mars_nn_hw.o $(OBJ_DIR)/mars_mars_math.o $(OBJ_DIR)/mars_mxu_ops.o -o $@ $(LDFLAGS) -lnna $(LIBS) -lm
 	@echo "Built Mars Inference test: $@"
 
-examples: $(EXAMPLE_BINS) $(CXX_EXAMPLE_BINS) $(BIN_DIR)/mars_test $(BIN_DIR)/mars_detect $(BIN_DIR)/nna_dma_test $(BIN_DIR)/mars_nna_bench $(BIN_DIR)/mars_conv_bench $(BIN_DIR)/mars_layer_bench $(BIN_DIR)/mars_inference_test
+# SOD Demo with MXU acceleration
+$(OBJ_DIR)/sod_mxu.o: sod/sod_mxu.c sod/sod_mxu.h | $(OBJ_DIR)
+	$(CC) $(CFLAGS) -I$(INC_DIR) -Isod -c $< -o $@
+	@echo "Built SOD MXU: $@"
+
+$(BIN_DIR)/sod_demo: sod/sod_demo.c sod/sod.c $(OBJ_DIR)/sod_mxu.o | $(BIN_DIR)
+	$(CC) $(CFLAGS) -I$(INC_DIR) -Isod -I. sod/sod_demo.c $(OBJ_DIR)/sod_mxu.o -o $@ -lm
+	@echo "Built SOD demo: $@"
+
+examples: $(EXAMPLE_BINS) $(CXX_EXAMPLE_BINS) $(BIN_DIR)/mars_test $(BIN_DIR)/mars_detect $(BIN_DIR)/nna_dma_test $(BIN_DIR)/mars_nna_bench $(BIN_DIR)/mars_conv_bench $(BIN_DIR)/mars_layer_bench $(BIN_DIR)/mars_inference_test $(BIN_DIR)/sod_demo
 
 # Install (for cross-compilation, just copy to build dir)
 install: all

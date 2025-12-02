@@ -1,0 +1,1 @@
+cmd_/home/matteius/thingino-accel/soc-nna/soc-nna.o := mipsel-linux-ld -m elf32ltsmip  -r -o /home/matteius/thingino-accel/soc-nna/soc-nna.o /home/matteius/thingino-accel/soc-nna/soc_nna_main.o /home/matteius/thingino-accel/soc-nna/platform.o 

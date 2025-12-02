@@ -11,6 +11,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <math.h>
+#include <sys/time.h>
 
 #include "mars.h"
 #include "mars_runtime.h"
@@ -18,6 +19,88 @@
 #include "nna_memory.h"
 #include "device_internal.h"
 #include "mxu_ops.h"
+
+/* Layer timing profiler */
+#define MARS_PROFILE_LAYERS 1
+
+#if MARS_PROFILE_LAYERS
+typedef struct {
+    double conv_time_ms;
+    double maxpool_time_ms;
+    double upsample_time_ms;
+    double concat_time_ms;
+    double sigmoid_time_ms;
+    double mul_time_ms;
+    double add_time_ms;
+    double reshape_time_ms;
+    double transpose_time_ms;
+    double silu_time_ms;
+    double relu_time_ms;
+    double other_time_ms;
+    int conv_count;
+    int maxpool_count;
+    int upsample_count;
+    int concat_count;
+    int sigmoid_count;
+    int mul_count;
+    int add_count;
+    int reshape_count;
+    int transpose_count;
+    int silu_count;
+    int relu_count;
+    int other_count;
+} mars_profile_t;
+
+static mars_profile_t g_profile = {0};
+
+static inline double get_time_ms(void) {
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return tv.tv_sec * 1000.0 + tv.tv_usec / 1000.0;
+}
+
+static void profile_reset(void) {
+    memset(&g_profile, 0, sizeof(g_profile));
+}
+
+static void profile_print(void) {
+    double total = g_profile.conv_time_ms + g_profile.maxpool_time_ms +
+                   g_profile.upsample_time_ms + g_profile.concat_time_ms +
+                   g_profile.sigmoid_time_ms + g_profile.mul_time_ms +
+                   g_profile.add_time_ms + g_profile.reshape_time_ms +
+                   g_profile.transpose_time_ms + g_profile.silu_time_ms +
+                   g_profile.relu_time_ms + g_profile.other_time_ms;
+
+    fprintf(stderr, "\n╔══════════════════════════════════════════════════════════╗\n");
+    fprintf(stderr, "║  Layer Profile (%.2f sec total)                          ║\n", total / 1000.0);
+    fprintf(stderr, "╠══════════════════════════════════════════════════════════╣\n");
+    fprintf(stderr, "║  Conv2D:    %7.2f ms (%5.1f%%) [%3d layers]             ║\n",
+            g_profile.conv_time_ms, 100.0 * g_profile.conv_time_ms / total, g_profile.conv_count);
+    fprintf(stderr, "║  MaxPool:   %7.2f ms (%5.1f%%) [%3d layers]             ║\n",
+            g_profile.maxpool_time_ms, 100.0 * g_profile.maxpool_time_ms / total, g_profile.maxpool_count);
+    fprintf(stderr, "║  Upsample:  %7.2f ms (%5.1f%%) [%3d layers]             ║\n",
+            g_profile.upsample_time_ms, 100.0 * g_profile.upsample_time_ms / total, g_profile.upsample_count);
+    fprintf(stderr, "║  Concat:    %7.2f ms (%5.1f%%) [%3d layers]             ║\n",
+            g_profile.concat_time_ms, 100.0 * g_profile.concat_time_ms / total, g_profile.concat_count);
+    fprintf(stderr, "║  Sigmoid:   %7.2f ms (%5.1f%%) [%3d layers]             ║\n",
+            g_profile.sigmoid_time_ms, 100.0 * g_profile.sigmoid_time_ms / total, g_profile.sigmoid_count);
+    fprintf(stderr, "║  SiLU:      %7.2f ms (%5.1f%%) [%3d layers]             ║\n",
+            g_profile.silu_time_ms, 100.0 * g_profile.silu_time_ms / total, g_profile.silu_count);
+    fprintf(stderr, "║  Mul:       %7.2f ms (%5.1f%%) [%3d layers]             ║\n",
+            g_profile.mul_time_ms, 100.0 * g_profile.mul_time_ms / total, g_profile.mul_count);
+    fprintf(stderr, "║  Add:       %7.2f ms (%5.1f%%) [%3d layers]             ║\n",
+            g_profile.add_time_ms, 100.0 * g_profile.add_time_ms / total, g_profile.add_count);
+    fprintf(stderr, "║  Reshape:   %7.2f ms (%5.1f%%) [%3d layers]             ║\n",
+            g_profile.reshape_time_ms, 100.0 * g_profile.reshape_time_ms / total, g_profile.reshape_count);
+    fprintf(stderr, "║  Transpose: %7.2f ms (%5.1f%%) [%3d layers]             ║\n",
+            g_profile.transpose_time_ms, 100.0 * g_profile.transpose_time_ms / total, g_profile.transpose_count);
+    fprintf(stderr, "║  ReLU:      %7.2f ms (%5.1f%%) [%3d layers]             ║\n",
+            g_profile.relu_time_ms, 100.0 * g_profile.relu_time_ms / total, g_profile.relu_count);
+    fprintf(stderr, "║  Other:     %7.2f ms (%5.1f%%) [%3d layers]             ║\n",
+            g_profile.other_time_ms, 100.0 * g_profile.other_time_ms / total, g_profile.other_count);
+    fprintf(stderr, "╚══════════════════════════════════════════════════════════╝\n\n");
+}
+#endif
 
 /* External MXU-accelerated convolutions */
 extern void conv2d_int8_mxu(
@@ -37,6 +120,26 @@ extern void conv2d_int8_nhwc_mxu(
     int stride_h, int stride_w,
     int pad_top, int pad_left,
     float in_scale, float w_scale, float out_scale);
+
+extern void conv2d_int8_nhwc_mxu_act(
+    const int8_t *input, int in_h, int in_w, int in_c,
+    const int8_t *weight, int out_c, int kh, int kw,
+    const int32_t *bias,
+    int8_t *output, int out_h, int out_w,
+    int stride_h, int stride_w,
+    int pad_top, int pad_left,
+    float in_scale, float w_scale, float out_scale,
+    int activation);
+
+extern void conv2d_int8_nhwc_mxu_tiled(
+    const int8_t *input, int in_h, int in_w, int in_c,
+    const int8_t *weight, int out_c, int kh, int kw,
+    const int32_t *bias,
+    int8_t *output, int out_h, int out_w,
+    int stride_h, int stride_w,
+    int pad_top, int pad_left,
+    float in_scale, float w_scale, float out_scale,
+    int activation);
 
 extern void conv2d_float32_mxu(
     const float *input, int in_h, int in_w, int in_c,
@@ -672,6 +775,10 @@ static void free_dead_tensors(mars_model_t *model, uint32_t layer_idx) {
 mars_error_t mars_run(mars_model_t *model) {
     if (!model) return MARS_ERR_INVALID_FILE;
 
+#if MARS_PROFILE_LAYERS
+    profile_reset();
+#endif
+
     /* Reset execution flags and buffer assignments */
     for (uint32_t i = 0; i < model->header.num_layers; i++) {
         model->layers[i].is_executed = false;
@@ -714,6 +821,10 @@ mars_error_t mars_run(mars_model_t *model) {
         /* Free dynamically allocated tensors that are no longer needed */
         free_dead_tensors(model, i);
     }
+
+#if MARS_PROFILE_LAYERS
+    profile_print();
+#endif
 
     model->inference_count++;
     return MARS_OK;
@@ -886,6 +997,44 @@ static mars_error_t execute_conv2d(mars_model_t *model, mars_runtime_layer_t *la
                is_float ? "F32-" : "INT8-",
                USE_MXU ? "MXU" : "SW",
                is_nhwc ? "-NHWC" : "");
+        /* Debug: print detection head outputs */
+        if (out_c == 255) {
+            float dbg_combined = (input->desc.scale * weight->desc.scale) / output->desc.scale;
+            printf("    [DET HEAD] out_id=%u buf_idx=%d vaddr=%p\n",
+                   out_id, output->buffer_idx, output->vaddr);
+            printf("    [DET HEAD] Scales: in=%.6f w=%.6f out=%.6f combined=%.10f\n",
+                   input->desc.scale, weight->desc.scale, output->desc.scale, dbg_combined);
+            /* Debug: check input and weight values */
+            int8_t *dbg_in = (int8_t*)input->vaddr;
+            int8_t *dbg_w = (int8_t*)weight->vaddr;
+            printf("    [DET HEAD] Input first 16: ");
+            for (int i = 0; i < 16; i++) printf("%d ", dbg_in[i]);
+            printf("\n");
+            printf("    [DET HEAD] Weight first 16 (oc=0): ");
+            for (int i = 0; i < 16; i++) printf("%d ", dbg_w[i]);
+            printf("\n");
+            printf("    [DET HEAD] Weight at oc=4 (obj): ");
+            for (int i = 0; i < 16; i++) printf("%d ", dbg_w[4*in_c + i]);
+            printf("\n");
+            if (bias) {
+                int32_t *dbg_b = (int32_t*)bias->vaddr;
+                printf("    [DET HEAD] Bias first 8: %d %d %d %d %d %d %d %d\n",
+                       dbg_b[0], dbg_b[1], dbg_b[2], dbg_b[3],
+                       dbg_b[4], dbg_b[5], dbg_b[6], dbg_b[7]);
+            }
+            /* Manual dot product verification for channel 0 */
+            int32_t dbg_sum = 0;
+            for (int i = 0; i < in_c; i++) {
+                dbg_sum += (int32_t)dbg_in[i] * (int32_t)dbg_w[i];  /* oc=0 */
+            }
+            if (bias) dbg_sum += ((int32_t*)bias->vaddr)[0];
+            int32_t dbg_result = (int32_t)(dbg_sum * dbg_combined + (dbg_sum >= 0 ? 0.5f : -0.5f));
+            if (dbg_result > 127) dbg_result = 127;
+            if (dbg_result < -128) dbg_result = -128;
+            printf("    [DET HEAD VERIFY] oc=0: dot=%d, +bias=%d, scaled=%d (expected=%d)\n",
+                   dbg_sum - (bias ? ((int32_t*)bias->vaddr)[0] : 0), dbg_sum, dbg_result,
+                   ((int8_t*)output->vaddr)[0]);
+        }
     }
 
 #if USE_MXU
@@ -903,16 +1052,31 @@ static mars_error_t execute_conv2d(mars_model_t *model, mars_runtime_layer_t *la
             scratch
         );
     } else if (is_nhwc) {
-        /* INT8 NHWC MXU-accelerated convolution - faster gather */
-        conv2d_int8_nhwc_mxu(
-            (int8_t *)input->vaddr, in_h, in_w, in_c,
-            (int8_t *)weight->vaddr, out_c, params->kernel_h, params->kernel_w,
-            bias ? (int32_t *)bias->vaddr : NULL,
-            (int8_t *)output->vaddr, out_h, out_w,
-            params->stride_h, params->stride_w,
-            pad_top, pad_left,
-            input->desc.scale, weight->desc.scale, output->desc.scale
-        );
+        /* INT8 NHWC MXU-accelerated convolution with spatial tiling
+         * Use tiled version for larger outputs to improve weight reuse */
+        if (out_w >= 8) {
+            conv2d_int8_nhwc_mxu_tiled(
+                (int8_t *)input->vaddr, in_h, in_w, in_c,
+                (int8_t *)weight->vaddr, out_c, params->kernel_h, params->kernel_w,
+                bias ? (int32_t *)bias->vaddr : NULL,
+                (int8_t *)output->vaddr, out_h, out_w,
+                params->stride_h, params->stride_w,
+                pad_top, pad_left,
+                input->desc.scale, weight->desc.scale, output->desc.scale,
+                params->activation  /* Pass activation type: 0=none, 1=relu, 3=leaky */
+            );
+        } else {
+            conv2d_int8_nhwc_mxu_act(
+                (int8_t *)input->vaddr, in_h, in_w, in_c,
+                (int8_t *)weight->vaddr, out_c, params->kernel_h, params->kernel_w,
+                bias ? (int32_t *)bias->vaddr : NULL,
+                (int8_t *)output->vaddr, out_h, out_w,
+                params->stride_h, params->stride_w,
+                pad_top, pad_left,
+                input->desc.scale, weight->desc.scale, output->desc.scale,
+                params->activation  /* Pass activation type: 0=none, 1=relu, 3=leaky */
+            );
+        }
     } else {
         /* INT8 NCHW MXU-accelerated convolution */
         conv2d_int8_mxu(
@@ -938,15 +1102,16 @@ static mars_error_t execute_conv2d(mars_model_t *model, mars_runtime_layer_t *la
             NULL
         );
     } else if (is_nhwc) {
-        /* INT8 NHWC software convolution */
-        conv2d_int8_nhwc_mxu(
+        /* INT8 NHWC software convolution with fused activation */
+        conv2d_int8_nhwc_mxu_act(
             (int8_t *)input->vaddr, in_h, in_w, in_c,
             (int8_t *)weight->vaddr, out_c, params->kernel_h, params->kernel_w,
             bias ? (int32_t *)bias->vaddr : NULL,
             (int8_t *)output->vaddr, out_h, out_w,
             params->stride_h, params->stride_w,
             pad_top, pad_left,
-            input->desc.scale, weight->desc.scale, output->desc.scale
+            input->desc.scale, weight->desc.scale, output->desc.scale,
+            params->activation  /* Pass activation type: 0=none, 1=relu, 3=leaky */
         );
     } else {
         /* INT8 NCHW software convolution */
@@ -963,12 +1128,36 @@ static mars_error_t execute_conv2d(mars_model_t *model, mars_runtime_layer_t *la
 #endif
 
     /* Apply activation if specified */
-    if (params->activation == MARS_ACT_RELU) {
-        int8_t *out = (int8_t *)output->vaddr;
-        int total = out_h * out_w * out_c;
-        for (int i = 0; i < total; i++) {
-            if (out[i] < 0) out[i] = 0;
+    /* NOTE: Activation (ReLU, LeakyReLU) is now applied INSIDE the conv kernel
+     * before quantization to INT8. This preserves magnitude information for
+     * LeakyReLU (negative values are scaled by 0.1 before clipping to [-128,127]).
+     * For NCHW path that doesn't support fused activation, apply it here: */
+    if (!is_nhwc) {
+        if (params->activation == MARS_ACT_RELU) {
+            int8_t *out = (int8_t *)output->vaddr;
+            int total = out_h * out_w * out_c;
+            for (int i = 0; i < total; i++) {
+                if (out[i] < 0) out[i] = 0;
+            }
+        } else if (params->activation == MARS_ACT_LEAKY_RELU) {
+            int8_t *out = (int8_t *)output->vaddr;
+            int total = out_h * out_w * out_c;
+            for (int i = 0; i < total; i++) {
+                if (out[i] < 0) {
+                    /* Apply 0.1x scaling to negative values */
+                    int32_t v = ((int32_t)out[i] * 26) >> 8;  /* 26/256 ≈ 0.1 */
+                    out[i] = (int8_t)(v < -128 ? -128 : v);
+                }
+            }
         }
+    }
+
+    /* Debug: print detection head output AFTER conv completes */
+    if (out_c == 255) {
+        int8_t *dbg = (int8_t*)output->vaddr;
+        printf("    [DET HEAD AFTER CONV] first 16: ");
+        for (int i = 0; i < 16; i++) printf("%d ", dbg[i]);
+        printf("\n");
     }
 
     return MARS_OK;
@@ -1685,6 +1874,32 @@ static mars_error_t execute_batchnorm(mars_model_t *model, mars_runtime_layer_t 
 }
 
 /* Execute SiLU (Swish): out = x * sigmoid(x) */
+/* SiLU LUT cache - regenerate when scales change */
+static int8_t silu_lut[256];  /* Output for input values -128 to 127 */
+static float silu_lut_in_scale = -1.0f;  /* Cached input scale */
+static float silu_lut_out_scale = -1.0f;  /* Cached output scale */
+
+/* Generate SiLU LUT for specific scales - only 256 expf() calls vs millions */
+static void generate_silu_lut(float in_scale, float out_scale) {
+    if (in_scale == silu_lut_in_scale && out_scale == silu_lut_out_scale) {
+        return;  /* Already cached */
+    }
+    for (int i = 0; i < 256; i++) {
+        int8_t in_val = (int8_t)(i - 128);
+        float x = in_val * in_scale;
+        float sigmoid_x = 1.0f / (1.0f + expf(-x));
+        float y = x * sigmoid_x;
+        float scaled = y / out_scale;
+        int32_t q = (int32_t)(scaled + (scaled >= 0 ? 0.5f : -0.5f));
+        if (q > 127) q = 127;
+        if (q < -128) q = -128;
+        silu_lut[(uint8_t)in_val] = (int8_t)q;
+    }
+    silu_lut_in_scale = in_scale;
+    silu_lut_out_scale = out_scale;
+}
+
+/* Fast SiLU for INT8 using per-scale LUT */
 static mars_error_t execute_silu(mars_model_t *model, mars_runtime_layer_t *layer) {
     const mars_layer_t *desc = &layer->desc;
 
@@ -1714,43 +1929,52 @@ static mars_error_t execute_silu(mars_model_t *model, mars_runtime_layer_t *laye
         return MARS_OK;
     }
 
-    /* INT8 path with quantization */
+    /* INT8 path with LUT acceleration */
     int8_t *in = (int8_t *)input->vaddr;
     int8_t *out = (int8_t *)output->vaddr;
     float in_scale = input->desc.scale;
     float out_scale = output->desc.scale > 0 ? output->desc.scale : in_scale;
 
+    /* Generate LUT for these scales (cached if same as last call) */
+    generate_silu_lut(in_scale, out_scale);
+
+    /* Apply LUT - simple array lookup, no expf() */
     for (size_t i = 0; i < numel; i++) {
-        /* Dequantize */
-        float x = in[i] * in_scale;
-        /* SiLU = x * sigmoid(x) */
-        float sigmoid_x = 1.0f / (1.0f + expf(-x));
-        float y = x * sigmoid_x;
-        /* Requantize with proper rounding for negative values */
-        float scaled = y / out_scale;
-        int32_t q = (int32_t)(scaled + (scaled >= 0 ? 0.5f : -0.5f));
-        if (q > 127) q = 127;
-        if (q < -128) q = -128;
-        out[i] = (int8_t)q;
+        out[i] = silu_lut[(uint8_t)in[i]];
     }
 
     return MARS_OK;
 }
 
-/* Layer execution dispatcher */
+/* Layer execution dispatcher with profiling */
 static mars_error_t execute_layer(mars_model_t *model, mars_runtime_layer_t *layer) {
     const mars_layer_t *desc = &layer->desc;
+    mars_error_t result;
+
+#if MARS_PROFILE_LAYERS
+    double t0 = get_time_ms();
+#endif
 
     switch (desc->type) {
         case MARS_LAYER_CONV2D:
-            return execute_conv2d(model, layer);
+            result = execute_conv2d(model, layer);
+#if MARS_PROFILE_LAYERS
+            g_profile.conv_time_ms += get_time_ms() - t0;
+            g_profile.conv_count++;
+#endif
+            return result;
 
         case MARS_LAYER_DEPTHWISE_CONV2D:
             /* TODO: implement depthwise conv */
             return MARS_OK;
 
         case MARS_LAYER_MAXPOOL:
-            return execute_maxpool(model, layer);
+            result = execute_maxpool(model, layer);
+#if MARS_PROFILE_LAYERS
+            g_profile.maxpool_time_ms += get_time_ms() - t0;
+            g_profile.maxpool_count++;
+#endif
+            return result;
 
         case MARS_LAYER_AVGPOOL:
             /* TODO: implement avgpool */
@@ -1759,38 +1983,88 @@ static mars_error_t execute_layer(mars_model_t *model, mars_runtime_layer_t *lay
         case MARS_LAYER_RELU:
         case MARS_LAYER_RELU6:
         case MARS_LAYER_LEAKY_RELU:
-            return execute_relu(model, layer);
+            result = execute_relu(model, layer);
+#if MARS_PROFILE_LAYERS
+            g_profile.relu_time_ms += get_time_ms() - t0;
+            g_profile.relu_count++;
+#endif
+            return result;
 
         case MARS_LAYER_SILU:
-            return execute_silu(model, layer);
+            result = execute_silu(model, layer);
+#if MARS_PROFILE_LAYERS
+            g_profile.silu_time_ms += get_time_ms() - t0;
+            g_profile.silu_count++;
+#endif
+            return result;
 
         case MARS_LAYER_SIGMOID:
-            return execute_sigmoid(model, layer);
+            result = execute_sigmoid(model, layer);
+#if MARS_PROFILE_LAYERS
+            g_profile.sigmoid_time_ms += get_time_ms() - t0;
+            g_profile.sigmoid_count++;
+#endif
+            return result;
 
         case MARS_LAYER_CONCAT:
-            return execute_concat(model, layer);
+            result = execute_concat(model, layer);
+#if MARS_PROFILE_LAYERS
+            g_profile.concat_time_ms += get_time_ms() - t0;
+            g_profile.concat_count++;
+#endif
+            return result;
 
         case MARS_LAYER_ADD:
-            return execute_add(model, layer);
+            result = execute_add(model, layer);
+#if MARS_PROFILE_LAYERS
+            g_profile.add_time_ms += get_time_ms() - t0;
+            g_profile.add_count++;
+#endif
+            return result;
 
         case MARS_LAYER_MUL:
-            return execute_mul(model, layer);
+            result = execute_mul(model, layer);
+#if MARS_PROFILE_LAYERS
+            g_profile.mul_time_ms += get_time_ms() - t0;
+            g_profile.mul_count++;
+#endif
+            return result;
 
         case MARS_LAYER_UPSAMPLE:
-            return execute_upsample(model, layer);
+            result = execute_upsample(model, layer);
+#if MARS_PROFILE_LAYERS
+            g_profile.upsample_time_ms += get_time_ms() - t0;
+            g_profile.upsample_count++;
+#endif
+            return result;
 
         case MARS_LAYER_RESHAPE:
-            return execute_reshape(model, layer);
+            result = execute_reshape(model, layer);
+#if MARS_PROFILE_LAYERS
+            g_profile.reshape_time_ms += get_time_ms() - t0;
+            g_profile.reshape_count++;
+#endif
+            return result;
 
         case MARS_LAYER_TRANSPOSE:
-            return execute_transpose(model, layer);
+            result = execute_transpose(model, layer);
+#if MARS_PROFILE_LAYERS
+            g_profile.transpose_time_ms += get_time_ms() - t0;
+            g_profile.transpose_count++;
+#endif
+            return result;
 
         case MARS_LAYER_SOFTMAX:
             /* TODO: implement softmax */
             return MARS_OK;
 
         case MARS_LAYER_BATCHNORM:
-            return execute_batchnorm(model, layer);
+            result = execute_batchnorm(model, layer);
+#if MARS_PROFILE_LAYERS
+            g_profile.other_time_ms += get_time_ms() - t0;
+            g_profile.other_count++;
+#endif
+            return result;
 
         default:
             fprintf(stderr, "Mars: Unknown layer type %d\n", desc->type);

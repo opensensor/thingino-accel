@@ -476,27 +476,41 @@ void conv2d_float32_mxu(
 }
 
 /*
- * MXUv3 INT8 convolution kernel for NHWC format
+ * MXUv3 INT8 convolution kernel for NHWC format with fused activation
  *
  * Input format: NHWC (batch, height, width, channels) - channels contiguous
  * Weight format: OHWI (out_ch, kh, kw, in_ch) - input channels contiguous per kernel position
  * Output format: NHWC (batch, height, width, channels)
+ *
+ * Activation is applied BEFORE quantization to INT8, preserving magnitude info.
+ * activation: 0=none, 1=relu, 3=leaky_relu (0.1 slope)
  *
  * NHWC is much faster because:
  * - Channels are contiguous at each spatial position
  * - Gather is just copying kh*kw rows of in_c bytes each
  * - No scattered memory access across channel planes
  */
-void conv2d_int8_nhwc_mxu(
+void conv2d_int8_nhwc_mxu_act(
     const int8_t *input, int in_h, int in_w, int in_c,
     const int8_t *weight, int out_c, int kh, int kw,
     const int32_t *bias,
     int8_t *output, int out_h, int out_w,
     int stride_h, int stride_w,
     int pad_top, int pad_left,
-    float in_scale, float w_scale, float out_scale)
+    float in_scale, float w_scale, float out_scale,
+    int activation)
 {
+    static int debug_count = 0;
+    if (debug_count < 3) {
+        fprintf(stderr, "    [DEBUG] conv act=%d (3=leaky) combined_scale=%f\n",
+                activation, (in_scale * w_scale) / out_scale);
+        debug_count++;
+    }
+
     float combined_scale = (in_scale * w_scale) / out_scale;
+
+    /* For LeakyReLU, compute scale for negative values: scale * 0.1 */
+    float neg_scale = combined_scale * 0.1f;
 
     /* Aligned scratch buffer for MXU output */
     int32_t scratch[16] __attribute__((aligned(64)));
@@ -605,11 +619,26 @@ void conv2d_int8_nhwc_mxu(
                     /* Add bias */
                     if (bias) { s0 += bias[oc]; s1 += bias[oc+1]; s2 += bias[oc+2]; s3 += bias[oc+3]; }
 
-                    /* Quantize and store - NHWC output: channels contiguous */
-                    int32_t r0 = (int32_t)(s0 * combined_scale + (s0 >= 0 ? 0.5f : -0.5f));
-                    int32_t r1 = (int32_t)(s1 * combined_scale + (s1 >= 0 ? 0.5f : -0.5f));
-                    int32_t r2 = (int32_t)(s2 * combined_scale + (s2 >= 0 ? 0.5f : -0.5f));
-                    int32_t r3 = (int32_t)(s3 * combined_scale + (s3 >= 0 ? 0.5f : -0.5f));
+                    /* Apply activation and quantize - NHWC output: channels contiguous */
+                    /* LeakyReLU applied BEFORE quantization to preserve magnitude */
+                    float sc0 = (s0 >= 0 || activation != 3) ? combined_scale : neg_scale;
+                    float sc1 = (s1 >= 0 || activation != 3) ? combined_scale : neg_scale;
+                    float sc2 = (s2 >= 0 || activation != 3) ? combined_scale : neg_scale;
+                    float sc3 = (s3 >= 0 || activation != 3) ? combined_scale : neg_scale;
+
+                    int32_t r0 = (int32_t)(s0 * sc0 + (s0 >= 0 ? 0.5f : -0.5f));
+                    int32_t r1 = (int32_t)(s1 * sc1 + (s1 >= 0 ? 0.5f : -0.5f));
+                    int32_t r2 = (int32_t)(s2 * sc2 + (s2 >= 0 ? 0.5f : -0.5f));
+                    int32_t r3 = (int32_t)(s3 * sc3 + (s3 >= 0 ? 0.5f : -0.5f));
+
+                    /* ReLU: clamp negatives to 0 */
+                    if (activation == 1) {
+                        if (r0 < 0) r0 = 0;
+                        if (r1 < 0) r1 = 0;
+                        if (r2 < 0) r2 = 0;
+                        if (r3 < 0) r3 = 0;
+                    }
+
                     r0 = r0 > 127 ? 127 : (r0 < -128 ? -128 : r0);
                     r1 = r1 > 127 ? 127 : (r1 < -128 ? -128 : r1);
                     r2 = r2 > 127 ? 127 : (r2 < -128 ? -128 : r2);
@@ -640,7 +669,9 @@ void conv2d_int8_nhwc_mxu(
                         sum += (int32_t)im2col_buf[i] * (int32_t)w_oc[i];
                     }
                     if (bias) sum += bias[oc];
-                    int32_t result = (int32_t)(sum * combined_scale + (sum >= 0 ? 0.5f : -0.5f));
+                    float sc = (sum >= 0 || activation != 3) ? combined_scale : neg_scale;
+                    int32_t result = (int32_t)(sum * sc + (sum >= 0 ? 0.5f : -0.5f));
+                    if (activation == 1 && result < 0) result = 0;
                     result = result > 127 ? 127 : (result < -128 ? -128 : result);
                     out_pos[oc] = (int8_t)result;
                 }
@@ -652,8 +683,9 @@ void conv2d_int8_nhwc_mxu(
                     for (int i = 0; i < weight_per_oc; i++) {
                         sum += (int32_t)im2col_buf[i] * (int32_t)w_oc[i];
                     }
-                    float scaled = sum * combined_scale;
-                    int32_t result = (int32_t)(scaled + (scaled >= 0 ? 0.5f : -0.5f));
+                    float sc = (sum >= 0 || activation != 3) ? combined_scale : neg_scale;
+                    int32_t result = (int32_t)(sum * sc + (sum >= 0 ? 0.5f : -0.5f));
+                    if (activation == 1 && result < 0) result = 0;
                     result = result > 127 ? 127 : (result < -128 ? -128 : result);
                     out_pos[oc] = (int8_t)result;
                 }
@@ -661,6 +693,177 @@ void conv2d_int8_nhwc_mxu(
         }
     }
     first_call = 0;
+}
+
+/*
+ * Optimized NHWC Conv2D with weight-stationary processing
+ * Load each 64-byte weight chunk ONCE, then apply to all tile positions
+ * This reduces weight memory bandwidth by TILE_W factor
+ */
+#define TILE_W 4  /* Process 4 output columns - balances reuse vs register pressure */
+
+void conv2d_int8_nhwc_mxu_tiled(
+    const int8_t *input, int in_h, int in_w, int in_c,
+    const int8_t *weight, int out_c, int kh, int kw,
+    const int32_t *bias,
+    int8_t *output, int out_h, int out_w,
+    int stride_h, int stride_w,
+    int pad_top, int pad_left,
+    float in_scale, float w_scale, float out_scale,
+    int activation)
+{
+    float combined_scale = (in_scale * w_scale) / out_scale;
+    float neg_scale = combined_scale * 0.1f;
+
+    int32_t scratch[16] __attribute__((aligned(64)));
+    int weight_per_oc = kh * kw * in_c;
+    int in_row_stride = in_w * in_c;
+
+    /* im2col buffers for tile positions - each is weight_per_oc bytes */
+    int8_t im2col_buf[TILE_W * 4096] __attribute__((aligned(64)));
+
+    /* Accumulators for tile positions (4 channels × TILE_W positions) */
+    int32_t tile_sums[TILE_W][4];
+
+    int use_mxu = (weight_per_oc >= 64);
+
+    for (int oh = 0; oh < out_h; oh++) {
+        for (int ow_base = 0; ow_base < out_w; ow_base += TILE_W) {
+            int tile_w = (ow_base + TILE_W <= out_w) ? TILE_W : (out_w - ow_base);
+
+            /* Gather im2col for all tile positions at once */
+            for (int t = 0; t < tile_w; t++) {
+                int ow = ow_base + t;
+                int8_t *dst = im2col_buf + t * weight_per_oc;
+                int base_ih = oh * stride_h - pad_top;
+                int base_iw = ow * stride_w - pad_left;
+
+                for (int khi = 0; khi < kh; khi++) {
+                    int ih = base_ih + khi;
+                    for (int kwi = 0; kwi < kw; kwi++) {
+                        int iw = base_iw + kwi;
+                        if (ih >= 0 && ih < in_h && iw >= 0 && iw < in_w) {
+                            memcpy(dst, input + ih * in_row_stride + iw * in_c, in_c);
+                        } else {
+                            memset(dst, 0, in_c);
+                        }
+                        dst += in_c;
+                    }
+                }
+            }
+
+            /* Process 4 output channels at a time */
+            for (int oc = 0; oc < out_c; oc += 4) {
+                int oc_count = (oc + 4 <= out_c) ? 4 : (out_c - oc);
+                const int8_t *w0 = weight + oc * weight_per_oc;
+                const int8_t *w1 = w0 + weight_per_oc;
+                const int8_t *w2 = w1 + weight_per_oc;
+                const int8_t *w3 = w2 + weight_per_oc;
+
+                /* Initialize accumulators for all tile positions */
+                for (int t = 0; t < tile_w; t++) {
+                    tile_sums[t][0] = tile_sums[t][1] = tile_sums[t][2] = tile_sums[t][3] = 0;
+                }
+
+                if (use_mxu && oc_count == 4) {
+                    /* WEIGHT-STATIONARY: Load each weight chunk once, apply to all tiles */
+                    int i = 0;
+                    for (; i + 64 <= weight_per_oc; i += 64) {
+                        /* Load weights ONCE per 64-byte chunk */
+                        LA0_VPR(1, w0 + i);
+                        LA0_VPR(2, w1 + i);
+                        LA0_VPR(3, w2 + i);
+                        LA0_VPR(4, w3 + i);
+
+                        /* Apply to each tile position, extracting results each time */
+                        for (int t = 0; t < tile_w; t++) {
+                            int8_t *im2col = im2col_buf + t * weight_per_oc;
+
+                            VSR_ZERO(0); VSR_ZERO(1); VSR_ZERO(2); VSR_ZERO(3);
+                            LA0_VPR(0, im2col + i);
+                            S4MACSSB(0, 0, 1);
+                            S4MACSSB(1, 0, 2);
+                            S4MACSSB(2, 0, 3);
+                            S4MACSSB(3, 0, 4);
+
+                            MFSUMZ(8, 0); MFSUMZ(9, 1); MFSUMZ(10, 2); MFSUMZ(11, 3);
+
+                            SA0_VPR(8, scratch);
+                            __asm__ __volatile__("sync" ::: "memory");
+                            tile_sums[t][0] += scratch[0] + scratch[4] + scratch[8] + scratch[12];
+
+                            SA0_VPR(9, scratch);
+                            __asm__ __volatile__("sync" ::: "memory");
+                            tile_sums[t][1] += scratch[0] + scratch[4] + scratch[8] + scratch[12];
+
+                            SA0_VPR(10, scratch);
+                            __asm__ __volatile__("sync" ::: "memory");
+                            tile_sums[t][2] += scratch[0] + scratch[4] + scratch[8] + scratch[12];
+
+                            SA0_VPR(11, scratch);
+                            __asm__ __volatile__("sync" ::: "memory");
+                            tile_sums[t][3] += scratch[0] + scratch[4] + scratch[8] + scratch[12];
+                        }
+                    }
+
+                    /* Scalar remainder for non-64-byte-aligned portion */
+                    for (; i < weight_per_oc; i++) {
+                        int8_t wv0 = w0[i], wv1 = w1[i], wv2 = w2[i], wv3 = w3[i];
+                        for (int t = 0; t < tile_w; t++) {
+                            int8_t v = im2col_buf[t * weight_per_oc + i];
+                            tile_sums[t][0] += (int32_t)v * (int32_t)wv0;
+                            tile_sums[t][1] += (int32_t)v * (int32_t)wv1;
+                            tile_sums[t][2] += (int32_t)v * (int32_t)wv2;
+                            tile_sums[t][3] += (int32_t)v * (int32_t)wv3;
+                        }
+                    }
+                } else {
+                    /* Scalar fallback */
+                    for (int c = 0; c < oc_count; c++) {
+                        const int8_t *w_oc = weight + (oc + c) * weight_per_oc;
+                        for (int t = 0; t < tile_w; t++) {
+                            int8_t *im2col = im2col_buf + t * weight_per_oc;
+                            for (int i = 0; i < weight_per_oc; i++) {
+                                tile_sums[t][c] += (int32_t)im2col[i] * (int32_t)w_oc[i];
+                            }
+                        }
+                    }
+                }
+
+                /* Quantize and store all tile results */
+                for (int t = 0; t < tile_w; t++) {
+                    int ow = ow_base + t;
+                    int8_t *out_pos = output + (oh * out_w + ow) * out_c;
+
+                    for (int c = 0; c < oc_count; c++) {
+                        int32_t sum = tile_sums[t][c];
+                        if (bias) sum += bias[oc + c];
+
+                        float sc = (sum >= 0 || activation != 3) ? combined_scale : neg_scale;
+                        int32_t result = (int32_t)(sum * sc + (sum >= 0 ? 0.5f : -0.5f));
+                        if (activation == 1 && result < 0) result = 0;
+                        result = result > 127 ? 127 : (result < -128 ? -128 : result);
+                        out_pos[oc + c] = (int8_t)result;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/* Wrapper without activation for backward compatibility */
+void conv2d_int8_nhwc_mxu(
+    const int8_t *input, int in_h, int in_w, int in_c,
+    const int8_t *weight, int out_c, int kh, int kw,
+    const int32_t *bias,
+    int8_t *output, int out_h, int out_w,
+    int stride_h, int stride_w,
+    int pad_top, int pad_left,
+    float in_scale, float w_scale, float out_scale)
+{
+    conv2d_int8_nhwc_mxu_act(input, in_h, in_w, in_c, weight, out_c, kh, kw,
+                              bias, output, out_h, out_w, stride_h, stride_w,
+                              pad_top, pad_left, in_scale, w_scale, out_scale, 0);
 }
 
 #else
@@ -747,17 +950,19 @@ void conv2d_float32_mxu(
     }
 }
 
-/* NHWC fallback for non-MIPS platforms */
-void conv2d_int8_nhwc_mxu(
+/* NHWC fallback for non-MIPS platforms with activation */
+void conv2d_int8_nhwc_mxu_act(
     const int8_t *input, int in_h, int in_w, int in_c,
     const int8_t *weight, int out_c, int kh, int kw,
     const int32_t *bias,
     int8_t *output, int out_h, int out_w,
     int stride_h, int stride_w,
     int pad_top, int pad_left,
-    float in_scale, float w_scale, float out_scale)
+    float in_scale, float w_scale, float out_scale,
+    int activation)
 {
     float combined_scale = (in_scale * w_scale) / out_scale;
+    float neg_scale = combined_scale * 0.1f;
     int weight_per_oc = kh * kw * in_c;  /* OHWI layout */
     int in_row_stride = in_w * in_c;
 
@@ -785,13 +990,45 @@ void conv2d_int8_nhwc_mxu(
                     }
                 }
 
-                float scaled = sum * combined_scale;
-                int32_t result = (int32_t)(scaled + (scaled >= 0 ? 0.5f : -0.5f));
+                float sc = (sum >= 0 || activation != 3) ? combined_scale : neg_scale;
+                int32_t result = (int32_t)(sum * sc + (sum >= 0 ? 0.5f : -0.5f));
+                if (activation == 1 && result < 0) result = 0;
                 result = result > 127 ? 127 : (result < -128 ? -128 : result);
                 out_pos[oc] = (int8_t)result;
             }
         }
     }
+}
+
+/* Wrapper without activation for backward compatibility */
+void conv2d_int8_nhwc_mxu(
+    const int8_t *input, int in_h, int in_w, int in_c,
+    const int8_t *weight, int out_c, int kh, int kw,
+    const int32_t *bias,
+    int8_t *output, int out_h, int out_w,
+    int stride_h, int stride_w,
+    int pad_top, int pad_left,
+    float in_scale, float w_scale, float out_scale)
+{
+    conv2d_int8_nhwc_mxu_act(input, in_h, in_w, in_c, weight, out_c, kh, kw,
+                              bias, output, out_h, out_w, stride_h, stride_w,
+                              pad_top, pad_left, in_scale, w_scale, out_scale, 0);
+}
+
+/* Tiled version fallback for non-MIPS - just call the regular version */
+void conv2d_int8_nhwc_mxu_tiled(
+    const int8_t *input, int in_h, int in_w, int in_c,
+    const int8_t *weight, int out_c, int kh, int kw,
+    const int32_t *bias,
+    int8_t *output, int out_h, int out_w,
+    int stride_h, int stride_w,
+    int pad_top, int pad_left,
+    float in_scale, float w_scale, float out_scale,
+    int activation)
+{
+    conv2d_int8_nhwc_mxu_act(input, in_h, in_w, in_c, weight, out_c, kh, kw,
+                              bias, output, out_h, out_w, stride_h, stride_w,
+                              pad_top, pad_left, in_scale, w_scale, out_scale, activation);
 }
 #endif /* __mips__ */
 

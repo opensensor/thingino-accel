@@ -1,0 +1,1 @@
+cmd_/home/matteius/thingino-accel/soc-nna/soc-nna.ko := mipsel-linux-ld -r -m elf32ltsmip -T ./scripts/module-common.lds --build-id  -o /home/matteius/thingino-accel/soc-nna/soc-nna.ko /home/matteius/thingino-accel/soc-nna/soc-nna.o /home/matteius/thingino-accel/soc-nna/soc-nna.mod.o
