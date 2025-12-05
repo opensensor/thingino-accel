@@ -163,6 +163,11 @@ $(BIN_DIR)/mars_nna_bench: $(EXAMPLES_DIR)/mars_nna_bench.c $(OBJ_DIR)/mars_mars
 	$(CC) $(CFLAGS) $< $(OBJ_DIR)/mars_mars_nn_hw.o $(OBJ_DIR)/mars_mars_math.o $(OBJ_DIR)/mars_mxu_ops.o -o $@ $(LDFLAGS) -lnna $(LIBS) -lm
 	@echo "Built Mars NNA benchmark: $@"
 
+# ORAM vs DDR benchmark
+$(BIN_DIR)/oram_bench: tools/oram_bench.c | $(BIN_DIR)
+	$(CC) $(CFLAGS) $< -o $@
+	@echo "Built ORAM benchmark: $@"
+
 # Mars Conv2D benchmark
 $(BIN_DIR)/mars_conv_bench: $(EXAMPLES_DIR)/mars_conv_bench.c $(OBJ_DIR)/mars_mars_nn_hw.o $(OBJ_DIR)/mars_mars_math.o $(OBJ_DIR)/mars_mxu_ops.o $(LIB_NNA_STATIC) | $(BIN_DIR)
 	$(CC) $(CFLAGS) $< $(OBJ_DIR)/mars_mars_nn_hw.o $(OBJ_DIR)/mars_mars_math.o $(OBJ_DIR)/mars_mxu_ops.o -o $@ $(LDFLAGS) -lnna $(LIBS) -lm

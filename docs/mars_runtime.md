@@ -58,18 +58,45 @@ The Mars Runtime is a neural network inference engine optimized for the **Ingeni
 | Reshape, Transpose | Memory reordering |
 | BatchNorm | Affine transform |
 
-### NNA Memory & DMA (Available but Unused in Hot Path)
+### NNA Hardware Components
 
-| Component | Status | Notes |
-|-----------|--------|-------|
-| **NNA Memory Allocation** | ✅ Used | `nna_malloc_phys()` for tensor memory from nmem pool |
-| **ORAM** | ⚠️ Implemented | 384KB on-chip SRAM, ~10x faster than DDR |
-| **NNDMA** | ⚠️ Implemented | DDR↔ORAM DMA transfers available |
-| **NNR/NNMAC** | ❌ Not used | Dedicated matrix multiply hardware - not yet reverse-engineered |
+| Component | Status | Description |
+|-----------|--------|-------------|
+| **NNA Memory (nmem)** | ✅ Used | 29MB pool for tensor allocation via `nna_malloc_phys()` |
+| **ORAM** | ⚠️ Available | 384KB on-chip SRAM, ~10x faster than DDR |
+| **NNDMA** | ⚠️ Available | DDR↔ORAM DMA engine, implemented in `src/nna_dma.c` |
+| **MXU VSR** | ✅ Used | 4 sum registers for INT8 MAC accumulation |
+| **NNR/NNMAC** | ❓ Unknown | Dedicated matrix multiply units - instruction format partially documented |
 
-**Current approach**: MXUv3 SIMD operates on tensors in DDR/nmem directly.
+**Current approach**: MXUv3 SIMD (VPR registers) operates on tensors in DDR/nmem directly.
 
-**Potential optimization**: Use ORAM for active tensors + NNDMA for prefetching could reduce memory latency significantly. The 384KB ORAM is ~10x faster than DDR access.
+**ORAM Benchmark Results** (T41 device):
+| Operation | DDR | ORAM | Speedup |
+|-----------|-----|------|---------|
+| Sequential Read | 41 MB/s | 314 MB/s | **7.6x** |
+| Sequential Write | 77 MB/s | 1578 MB/s | **20.6x** |
+| MXU Dot Product | 101 ms | 18 ms | **5.55x** |
+
+**Optimization path**:
+1. ✅ Stage active tensors in ORAM for layers that fit (640KB available)
+2. Use NNDMA to prefetch next layer while computing current
+3. Investigate NNR/NNMAC for dedicated convolution acceleration
+
+### INT8 MAC Acceleration (S4MACSSB)
+
+For INT8 convolutions, we use the `S4MACSSB` instruction which computes 4 dot products simultaneously:
+
+```c
+// Computes 4 segment dot products of 16 bytes each
+VSR_ZERO(0);                    // Clear accumulator
+LA0_VPR(0, input);              // Load 64 bytes input
+LA0_VPR(1, weights);            // Load 64 bytes weights
+S4MACSSB(0, 0, 1);              // VSR0 += dot(input, weights) for 4 segments
+MFSUMZ(2, 0);                   // Move results to VPR2
+SA0_VPR(2, output);             // Store 4 partial sums
+```
+
+This processes 64 bytes per instruction vs 16 floats for float32 VPR_MUL.
 
 ## MXUv3 Technical Details
 

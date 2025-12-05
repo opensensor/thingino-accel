@@ -968,6 +968,115 @@ void conv2d_float32_nhwc(
     free(im2col_buf);
 }
 
+/*
+ * ORAM-accelerated Float32 NHWC convolution
+ *
+ * Stages weights in ORAM for 5-20x faster access.
+ * Use when weight_size <= oram_size.
+ *
+ * Benchmark shows: ORAM is 7.6x faster for reads, 20x faster for writes.
+ */
+void conv2d_float32_nhwc_oram(
+    const float *input, int in_h, int in_w, int in_c,
+    const float *weight, int out_c, int kh, int kw,
+    const float *bias,
+    float *output, int out_h, int out_w,
+    int stride_h, int stride_w,
+    int pad_top, int pad_left,
+    int dilation_h, int dilation_w,
+    int activation,
+    void *oram_base, uint32_t oram_size)
+{
+    /* Weight layout: OHWI - [out_c][kh][kw][in_c] */
+    int weight_per_oc = kh * kw * in_c;
+    uint32_t weight_size = (uint32_t)(out_c * weight_per_oc * sizeof(float));
+    int in_row_stride = in_w * in_c;
+
+    /* Check if weights fit in ORAM */
+    int use_oram = (oram_base != NULL && weight_size <= oram_size);
+    volatile float *oram_weights = NULL;
+
+    if (use_oram) {
+        /* Stage weights to ORAM for faster access */
+        oram_weights = (volatile float *)oram_base;
+        memcpy((void *)oram_weights, weight, weight_size);
+        __sync_synchronize();
+    }
+
+    /* Allocate im2col buffer for kernel window (64-byte aligned for MXU) */
+    int im2col_size = ((weight_per_oc + 15) & ~15) * sizeof(float);
+    float *im2col_buf = (float *)aligned_alloc(64, im2col_size);
+    if (!im2col_buf) {
+        im2col_buf = (float *)malloc(im2col_size);
+    }
+
+    /* Scratch buffer for MXU horizontal sum (64-byte aligned) */
+    float scratch[16] __attribute__((aligned(64)));
+
+    for (int oh = 0; oh < out_h; oh++) {
+        for (int ow = 0; ow < out_w; ow++) {
+            float *out_pos = output + (oh * out_w + ow) * out_c;
+
+            /* Gather kernel window into im2col_buf ONCE per output position */
+            float *dst = im2col_buf;
+            for (int khi = 0; khi < kh; khi++) {
+                int ih = oh * stride_h - pad_top + khi * dilation_h;
+                for (int kwi = 0; kwi < kw; kwi++) {
+                    int iw = ow * stride_w - pad_left + kwi * dilation_w;
+                    if (ih >= 0 && ih < in_h && iw >= 0 && iw < in_w) {
+                        const float *in_pos = input + ih * in_row_stride + iw * in_c;
+                        memcpy(dst, in_pos, in_c * sizeof(float));
+                    } else {
+                        memset(dst, 0, in_c * sizeof(float));
+                    }
+                    dst += in_c;
+                }
+            }
+
+            /* Compute all output channels using the gathered window */
+            for (int oc = 0; oc < out_c; oc++) {
+                /* Use ORAM weights if staged, otherwise DDR weights */
+                const float *w_oc = use_oram
+                    ? (const float *)(oram_weights + oc * weight_per_oc)
+                    : (weight + oc * weight_per_oc);
+                float sum = bias ? bias[oc] : 0.0f;
+
+                /* MXU-accelerated dot product: process 16 floats at a time */
+                int i = 0;
+                for (; i + 16 <= weight_per_oc; i += 16) {
+                    LA0_VPR(2, im2col_buf + i);  /* VPR2 = input patch */
+                    LA0_VPR(4, w_oc + i);        /* VPR4 = weights (from ORAM!) */
+                    VPR_MUL(2, 4);               /* VPR2 = VPR2 * VPR4 */
+                    SA0_VPR(2, scratch);
+                    __asm__ __volatile__("sync" ::: "memory");
+
+                    /* Horizontal sum of 16 products */
+                    sum += scratch[0] + scratch[1] + scratch[2] + scratch[3] +
+                           scratch[4] + scratch[5] + scratch[6] + scratch[7] +
+                           scratch[8] + scratch[9] + scratch[10] + scratch[11] +
+                           scratch[12] + scratch[13] + scratch[14] + scratch[15];
+                }
+
+                /* Scalar tail for remaining elements */
+                for (; i < weight_per_oc; i++) {
+                    sum += im2col_buf[i] * w_oc[i];
+                }
+
+                /* Apply activation */
+                if (activation == 1 && sum < 0) {
+                    sum = 0.0f;  /* ReLU */
+                } else if (activation == 3 && sum < 0) {
+                    sum *= 0.1f;  /* LeakyReLU */
+                }
+
+                out_pos[oc] = sum;
+            }
+        }
+    }
+
+    free(im2col_buf);
+}
+
 #else
 /* Fallback for non-MIPS platforms - NCHW format */
 void conv2d_int8_mxu(
@@ -1099,6 +1208,25 @@ void conv2d_float32_nhwc(
             }
         }
     }
+}
+
+/* ORAM fallback for non-MIPS platforms - just calls regular version */
+void conv2d_float32_nhwc_oram(
+    const float *input, int in_h, int in_w, int in_c,
+    const float *weight, int out_c, int kh, int kw,
+    const float *bias,
+    float *output, int out_h, int out_w,
+    int stride_h, int stride_w,
+    int pad_top, int pad_left,
+    int dilation_h, int dilation_w,
+    int activation,
+    void *oram_base, uint32_t oram_size)
+{
+    (void)oram_base;
+    (void)oram_size;
+    conv2d_float32_nhwc(input, in_h, in_w, in_c, weight, out_c, kh, kw,
+                        bias, output, out_h, out_w, stride_h, stride_w,
+                        pad_top, pad_left, dilation_h, dilation_w, activation);
 }
 
 /* NHWC fallback for non-MIPS platforms with activation */

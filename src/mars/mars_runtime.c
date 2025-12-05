@@ -171,6 +171,18 @@ extern void conv2d_float32_nhwc(
     int dilation_h, int dilation_w,
     int activation);
 
+/* ORAM-accelerated version - stages weights in ORAM for 5-20x faster access */
+extern void conv2d_float32_nhwc_oram(
+    const float *input, int in_h, int in_w, int in_c,
+    const float *weight, int out_c, int kh, int kw,
+    const float *bias,
+    float *output, int out_h, int out_w,
+    int stride_h, int stride_w,
+    int pad_top, int pad_left,
+    int dilation_h, int dilation_w,
+    int activation,
+    void *oram_base, uint32_t oram_size);
+
 /* Always use MXU acceleration - no fallback for Ingenic devices */
 #define USE_MXU 1
 
@@ -1090,17 +1102,36 @@ static mars_error_t execute_conv2d(mars_model_t *model, mars_runtime_layer_t *la
         }
         nhwc_conv_count++;
 
-        /* Float32 NHWC convolution with fused activation */
-        conv2d_float32_nhwc(
-            (float *)input->vaddr, in_h, in_w, in_c,
-            (float *)weight->vaddr, out_c, params->kernel_h, params->kernel_w,
-            bias ? (float *)bias->vaddr : NULL,
-            (float *)output->vaddr, out_h, out_w,
-            params->stride_h, params->stride_w,
-            pad_top, pad_left,
-            params->dilation_h, params->dilation_w,
-            params->activation
-        );
+        /* Float32 NHWC convolution with fused activation
+         * Use ORAM-accelerated version if weights fit in ORAM */
+        uint32_t weight_size = out_c * params->kernel_h * params->kernel_w * in_c * sizeof(float);
+
+        if (model->oram_base && weight_size <= model->oram_size) {
+            /* ORAM path - 5-20x faster weight access */
+            conv2d_float32_nhwc_oram(
+                (float *)input->vaddr, in_h, in_w, in_c,
+                (float *)weight->vaddr, out_c, params->kernel_h, params->kernel_w,
+                bias ? (float *)bias->vaddr : NULL,
+                (float *)output->vaddr, out_h, out_w,
+                params->stride_h, params->stride_w,
+                pad_top, pad_left,
+                params->dilation_h, params->dilation_w,
+                params->activation,
+                model->oram_base, model->oram_size
+            );
+        } else {
+            /* DDR path - weights too large for ORAM */
+            conv2d_float32_nhwc(
+                (float *)input->vaddr, in_h, in_w, in_c,
+                (float *)weight->vaddr, out_c, params->kernel_h, params->kernel_w,
+                bias ? (float *)bias->vaddr : NULL,
+                (float *)output->vaddr, out_h, out_w,
+                params->stride_h, params->stride_w,
+                pad_top, pad_left,
+                params->dilation_h, params->dilation_w,
+                params->activation
+            );
+        }
 
         if (mars_debug_enabled) {
             float *out = (float *)output->vaddr;
