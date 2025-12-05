@@ -64,10 +64,10 @@ struct Args {
     #[arg(short, long)]
     float32: bool,
 
-    /// Use NHWC format for features (channels-last, faster gather)
-    /// Default is NCHW (channels-first, ONNX native)
+    /// Use NCHW format for features (channels-first, ONNX native)
+    /// Default is NHWC (channels-last, faster gather on T41 NNA)
     #[arg(long)]
-    nhwc: bool,
+    nchw: bool,
 
     /// Darknet architecture (for .weights/.sod files)
     /// Built-in: :face, :tiny
@@ -909,8 +909,17 @@ impl MarsCompiler {
                 }
             }
         } else {
-            // Float32: Store as-is in OIHW format (standard ONNX layout)
-            (weight_tensor.data.clone(), 1.0, DataFormat::Oihw)
+            // Float32: Convert to OHWI format if using NHWC features
+            if self.use_nhwc {
+                println!("  Converting weights {} to OHWI: [{}x{}x{}x{}]",
+                    weight_name, out_ch, in_ch, kh, kw);
+                let ohwi_weights = convert_oihw_to_ohwi_f32(&weight_tensor.data,
+                    out_ch as usize, in_ch as usize, kh as usize, kw as usize);
+                (ohwi_weights, 1.0, DataFormat::Ohwi)
+            } else {
+                // Keep OIHW format for NCHW features
+                (weight_tensor.data.clone(), 1.0, DataFormat::Oihw)
+            }
         };
         let (weight_offset, weight_size) = self.add_weights(&weight_data);
 
@@ -931,10 +940,42 @@ impl MarsCompiler {
         self.tensors.push(w_tensor);
 
         // Handle bias if present
+        // For INT8 quantized models, bias must be INT32 with scale = in_scale * w_scale
+        // This allows direct addition to the INT32 accumulator
         let bias_id = if let Some(bias_name) = node.inputs.get(2) {
             // Try direct lookup first (for non-QDQ models)
             let bias_result = if let Some(bias_tensor) = self.onnx.initializers.get(bias_name) {
-                Some((bias_tensor.data.clone(), DataType::Float32))
+                if self.quantize {
+                    // Quantize float32 bias to INT32 with scale = in_scale * w_scale
+                    // Get the input tensor's scale
+                    let in_scale = self.get_tensor_scale(input_id);
+                    let bias_scale = in_scale * scale;  // scale is the weight scale from above
+
+                    // Convert float32 biases to INT32
+                    let float_biases: Vec<f32> = bias_tensor.data.chunks_exact(4)
+                        .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+                        .collect();
+                    let int_biases: Vec<i32> = float_biases.iter()
+                        .map(|&b| (b / bias_scale).round() as i32)
+                        .collect();
+                    let int_bias_data: Vec<u8> = int_biases.iter()
+                        .flat_map(|i| i.to_le_bytes())
+                        .collect();
+
+                    if self.verbose && layer_id < 3 {
+                        println!("  Quantizing bias {} to INT32: in_scale={:.6} w_scale={:.6} bias_scale={:.6}",
+                                 bias_name, in_scale, scale, bias_scale);
+                        if !float_biases.is_empty() {
+                            println!("    First 4 float biases: {:?}", &float_biases[..float_biases.len().min(4)]);
+                            println!("    First 4 int32 biases: {:?}", &int_biases[..int_biases.len().min(4)]);
+                        }
+                    }
+
+                    Some((int_bias_data, DataType::Int32))
+                } else {
+                    // Float32 mode - keep biases as float32
+                    Some((bias_tensor.data.clone(), DataType::Float32))
+                }
             } else if self.quantize {
                 // For QDQ models, bias input is the output of DequantizeLinear
                 // The actual quantized bias is stored as {bias_name}_quantized
@@ -1034,14 +1075,17 @@ impl MarsCompiler {
                 }
             } else {
                 // Fallback: conservative heuristic to prevent overflow
-                // combined_scale = 1 / fan_in
+                // Use sqrt(fan_in) as a moderate estimate of actual activation magnitude
+                // This gives combined_scale = 1 / sqrt(fan_in), which is a reasonable
+                // approximation assuming weights and inputs have unit variance
                 let in_scale = self.get_tensor_scale(input_id);
                 let fan_in = (in_ch * kh * kw) as f32;
-                let out_scale = in_scale * scale * fan_in;
+                let out_scale = in_scale * scale * fan_in.sqrt();
                 self.set_tensor_scale(output_id, out_scale);
                 if self.verbose && layer_id < 5 {
-                    println!("  Conv[{}] heuristic scales: in={:.6} w={:.6} out={:.6} (fan_in={})",
-                             layer_id, in_scale, scale, out_scale, fan_in);
+                    let combined = (in_scale * scale) / out_scale;
+                    println!("  Conv[{}] heuristic scales: in={:.6} w={:.6} out={:.6} (fan_in={}, combined={:.6})",
+                             layer_id, in_scale, scale, out_scale, fan_in as i32, combined);
                 }
             }
         }
@@ -2316,9 +2360,9 @@ fn main() -> Result<()> {
         args.input.extension().map(|e| e == "sod" || e == "weights").unwrap_or(false);
 
     let quantize = !args.float32;
-    let use_nhwc = args.nhwc;
+    let use_nhwc = !args.nchw;  // Default to NHWC (faster on T41 NNA)
     println!("Quantization: {}", if quantize { "INT8" } else { "FLOAT32 (no quantization)" });
-    println!("Feature format: {}", if use_nhwc { "NHWC (channels-last)" } else { "NCHW (channels-first)" });
+    println!("Feature format: {}", if use_nhwc { "NHWC (channels-last, default)" } else { "NCHW (channels-first)" });
 
     let (num_layers, num_tensors, weights_size) = if is_darknet {
         // Darknet/SOD model

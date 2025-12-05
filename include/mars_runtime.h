@@ -152,6 +152,18 @@ int mars_get_num_outputs(mars_model_t *model);
  */
 void mars_print_summary(mars_model_t *model);
 
+/**
+ * Enable/disable debug output
+ * @param enable 1 to enable debug prints, 0 to disable (default)
+ */
+void mars_set_debug(int enable);
+
+/**
+ * Check if debug output is enabled
+ * @return Current debug state
+ */
+int mars_get_debug(void);
+
 #ifdef __cplusplus
 }
 #endif

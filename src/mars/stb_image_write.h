@@ -1496,26 +1496,48 @@ static int stbi_write_jpg_core(stbi__write_context *s, int width, int height, in
 
    // Write Headers
    {
-      static const unsigned char head0[] = { 0xFF,0xD8,0xFF,0xE0,0,0x10,'J','F','I','F',0,1,1,0,0,1,0,1,0,0,0xFF,0xDB,0,0x84,0 };
+      // Fixed JFIF header with 72 DPI (units=1 means DPI, density=72)
+      // Use separate DQT markers for better compatibility (some parsers don't like combined tables)
+      static const unsigned char head0[] = { 0xFF,0xD8,0xFF,0xE0,0,0x10,'J','F','I','F',0,1,1,1,0,72,0,72,0,0 };
+      static const unsigned char dqt_y[] = { 0xFF,0xDB,0,0x43,0 };  // DQT marker, length 67, table 0 (Y)
+      static const unsigned char dqt_uv[] = { 0xFF,0xDB,0,0x43,1 }; // DQT marker, length 67, table 1 (UV)
       static const unsigned char head2[] = { 0xFF,0xDA,0,0xC,3,1,0,2,0x11,3,0x11,0,0x3F,0 };
-      const unsigned char head1[] = { 0xFF,0xC0,0,0x11,8,(unsigned char)(height>>8),STBIW_UCHAR(height),(unsigned char)(width>>8),STBIW_UCHAR(width),
-                                      3,1,(unsigned char)(subsample?0x22:0x11),0,2,0x11,1,3,0x11,1,0xFF,0xC4,0x01,0xA2,0 };
+      // SOF0 marker (no DHT here - we'll write separate DHT markers)
+      const unsigned char sof0[] = { 0xFF,0xC0,0,0x11,8,(unsigned char)(height>>8),STBIW_UCHAR(height),(unsigned char)(width>>8),STBIW_UCHAR(width),
+                                      3,1,(unsigned char)(subsample?0x22:0x11),0,2,0x11,1,3,0x11,1 };
+      // DHT markers - write 4 separate ones for maximum compatibility
+      // DHT for Y DC: length = 2 + 1 + 16 + 12 = 31 = 0x1F
+      static const unsigned char dht_ydc[] = { 0xFF,0xC4,0,0x1F,0x00 };
+      // DHT for Y AC: length = 2 + 1 + 16 + 162 = 181 = 0xB5
+      static const unsigned char dht_yac[] = { 0xFF,0xC4,0,0xB5,0x10 };
+      // DHT for UV DC: length = 2 + 1 + 16 + 12 = 31 = 0x1F
+      static const unsigned char dht_uvdc[] = { 0xFF,0xC4,0,0x1F,0x01 };
+      // DHT for UV AC: length = 2 + 1 + 16 + 162 = 181 = 0xB5
+      static const unsigned char dht_uvac[] = { 0xFF,0xC4,0,0xB5,0x11 };
+
       s->func(s->context, (void*)head0, sizeof(head0));
+      s->func(s->context, (void*)dqt_y, sizeof(dqt_y));
       s->func(s->context, (void*)YTable, sizeof(YTable));
-      stbiw__putc(s, 1);
+      s->func(s->context, (void*)dqt_uv, sizeof(dqt_uv));
       s->func(s->context, UVTable, sizeof(UVTable));
-      s->func(s->context, (void*)head1, sizeof(head1));
+      s->func(s->context, (void*)sof0, sizeof(sof0));
+      // DHT 1: Y DC
+      s->func(s->context, (void*)dht_ydc, sizeof(dht_ydc));
       s->func(s->context, (void*)(std_dc_luminance_nrcodes+1), sizeof(std_dc_luminance_nrcodes)-1);
       s->func(s->context, (void*)std_dc_luminance_values, sizeof(std_dc_luminance_values));
-      stbiw__putc(s, 0x10); // HTYACinfo
+      // DHT 2: Y AC
+      s->func(s->context, (void*)dht_yac, sizeof(dht_yac));
       s->func(s->context, (void*)(std_ac_luminance_nrcodes+1), sizeof(std_ac_luminance_nrcodes)-1);
       s->func(s->context, (void*)std_ac_luminance_values, sizeof(std_ac_luminance_values));
-      stbiw__putc(s, 1); // HTUDCinfo
+      // DHT 3: UV DC
+      s->func(s->context, (void*)dht_uvdc, sizeof(dht_uvdc));
       s->func(s->context, (void*)(std_dc_chrominance_nrcodes+1), sizeof(std_dc_chrominance_nrcodes)-1);
       s->func(s->context, (void*)std_dc_chrominance_values, sizeof(std_dc_chrominance_values));
-      stbiw__putc(s, 0x11); // HTUACinfo
+      // DHT 4: UV AC
+      s->func(s->context, (void*)dht_uvac, sizeof(dht_uvac));
       s->func(s->context, (void*)(std_ac_chrominance_nrcodes+1), sizeof(std_ac_chrominance_nrcodes)-1);
       s->func(s->context, (void*)std_ac_chrominance_values, sizeof(std_ac_chrominance_values));
+      // SOS marker
       s->func(s->context, (void*)head2, sizeof(head2));
    }
 

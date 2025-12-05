@@ -866,6 +866,108 @@ void conv2d_int8_nhwc_mxu(
                               pad_top, pad_left, in_scale, w_scale, out_scale, 0);
 }
 
+/*
+ * Float32 convolution for NHWC format with fused activation
+ * MXU-OPTIMIZED VERSION
+ *
+ * Input format: NHWC (batch, height, width, channels)
+ * Weight format: OHWI (out_ch, kh, kw, in_ch) - compatible with NHWC gather
+ * Output format: NHWC (batch, height, width, channels)
+ *
+ * activation: 0=none, 1=relu, 3=leaky_relu (0.1 slope)
+ * dilation_h, dilation_w: dilation factors (1 = no dilation)
+ *
+ * Optimization strategy:
+ * 1. Gather kernel window once per output position into im2col buffer
+ * 2. Use MXU VPR for vectorized multiply-accumulate (16 floats/iteration)
+ * 3. Process multiple output channels per gathered window
+ */
+void conv2d_float32_nhwc(
+    const float *input, int in_h, int in_w, int in_c,
+    const float *weight, int out_c, int kh, int kw,
+    const float *bias,
+    float *output, int out_h, int out_w,
+    int stride_h, int stride_w,
+    int pad_top, int pad_left,
+    int dilation_h, int dilation_w,
+    int activation)
+{
+    /* Weight layout: OHWI - [out_c][kh][kw][in_c] */
+    int weight_per_oc = kh * kw * in_c;
+    int in_row_stride = in_w * in_c;
+
+    /* Allocate im2col buffer for kernel window (64-byte aligned for MXU) */
+    int im2col_size = ((weight_per_oc + 15) & ~15) * sizeof(float);
+    float *im2col_buf = (float *)aligned_alloc(64, im2col_size);
+    if (!im2col_buf) {
+        /* Fallback to non-aligned allocation */
+        im2col_buf = (float *)malloc(im2col_size);
+    }
+
+    /* Scratch buffer for MXU horizontal sum (64-byte aligned) */
+    float scratch[16] __attribute__((aligned(64)));
+
+    for (int oh = 0; oh < out_h; oh++) {
+        for (int ow = 0; ow < out_w; ow++) {
+            float *out_pos = output + (oh * out_w + ow) * out_c;
+
+            /* Gather kernel window into im2col_buf ONCE per output position */
+            float *dst = im2col_buf;
+            for (int khi = 0; khi < kh; khi++) {
+                int ih = oh * stride_h - pad_top + khi * dilation_h;
+                for (int kwi = 0; kwi < kw; kwi++) {
+                    int iw = ow * stride_w - pad_left + kwi * dilation_w;
+                    if (ih >= 0 && ih < in_h && iw >= 0 && iw < in_w) {
+                        const float *in_pos = input + ih * in_row_stride + iw * in_c;
+                        memcpy(dst, in_pos, in_c * sizeof(float));
+                    } else {
+                        memset(dst, 0, in_c * sizeof(float));
+                    }
+                    dst += in_c;
+                }
+            }
+
+            /* Now compute all output channels using the gathered window */
+            for (int oc = 0; oc < out_c; oc++) {
+                const float *w_oc = weight + oc * weight_per_oc;
+                float sum = bias ? bias[oc] : 0.0f;
+
+                /* MXU-accelerated dot product: process 16 floats at a time */
+                int i = 0;
+                for (; i + 16 <= weight_per_oc; i += 16) {
+                    LA0_VPR(2, im2col_buf + i);  /* VPR2 = input patch */
+                    LA0_VPR(4, w_oc + i);        /* VPR4 = weights */
+                    VPR_MUL(2, 4);               /* VPR2 = VPR2 * VPR4 */
+                    SA0_VPR(2, scratch);
+                    __asm__ __volatile__("sync" ::: "memory");
+
+                    /* Horizontal sum of 16 products */
+                    sum += scratch[0] + scratch[1] + scratch[2] + scratch[3] +
+                           scratch[4] + scratch[5] + scratch[6] + scratch[7] +
+                           scratch[8] + scratch[9] + scratch[10] + scratch[11] +
+                           scratch[12] + scratch[13] + scratch[14] + scratch[15];
+                }
+
+                /* Scalar tail for remaining elements */
+                for (; i < weight_per_oc; i++) {
+                    sum += im2col_buf[i] * w_oc[i];
+                }
+
+                /* Apply activation */
+                if (activation == 1 && sum < 0) {
+                    sum = 0.0f;  /* ReLU */
+                } else if (activation == 3 && sum < 0) {
+                    sum *= 0.1f;  /* LeakyReLU */
+                }
+
+                out_pos[oc] = sum;
+            }
+        }
+    }
+
+    free(im2col_buf);
+}
+
 #else
 /* Fallback for non-MIPS platforms - NCHW format */
 void conv2d_int8_mxu(
@@ -945,6 +1047,55 @@ void conv2d_float32_mxu(
                 }
 
                 output[oc * out_h * out_w + oh * out_w + ow] = sum;
+            }
+        }
+    }
+}
+
+/*
+ * Float32 convolution for NHWC format with fused activation
+ * SCALAR FALLBACK for non-MIPS platforms
+ */
+void conv2d_float32_nhwc(
+    const float *input, int in_h, int in_w, int in_c,
+    const float *weight, int out_c, int kh, int kw,
+    const float *bias,
+    float *output, int out_h, int out_w,
+    int stride_h, int stride_w,
+    int pad_top, int pad_left,
+    int dilation_h, int dilation_w,
+    int activation)
+{
+    int weight_per_oc = kh * kw * in_c;
+    int in_row_stride = in_w * in_c;
+
+    for (int oh = 0; oh < out_h; oh++) {
+        for (int ow = 0; ow < out_w; ow++) {
+            float *out_pos = output + (oh * out_w + ow) * out_c;
+
+            for (int oc = 0; oc < out_c; oc++) {
+                const float *w_oc = weight + oc * weight_per_oc;
+                float sum = bias ? bias[oc] : 0.0f;
+
+                int w_idx = 0;
+                for (int khi = 0; khi < kh; khi++) {
+                    int ih = oh * stride_h - pad_top + khi * dilation_h;
+                    for (int kwi = 0; kwi < kw; kwi++) {
+                        int iw = ow * stride_w - pad_left + kwi * dilation_w;
+                        if (ih >= 0 && ih < in_h && iw >= 0 && iw < in_w) {
+                            const float *in_pos = input + ih * in_row_stride + iw * in_c;
+                            for (int ic = 0; ic < in_c; ic++) {
+                                sum += in_pos[ic] * w_oc[w_idx++];
+                            }
+                        } else {
+                            w_idx += in_c;
+                        }
+                    }
+                }
+
+                if (activation == 1 && sum < 0) sum = 0.0f;
+                else if (activation == 3 && sum < 0) sum *= 0.1f;
+                out_pos[oc] = sum;
             }
         }
     }

@@ -1,8 +1,6 @@
-//! Build script to compile ONNX protobuf definitions
+//! Build script for Mars compiler
 
 fn main() {
-    // We'll use a pre-generated onnx.rs file instead of compiling proto at build time
-    // This avoids needing protoc installed
+    // No special build steps needed - using the `onnx` crate for protobuf parsing
     println!("cargo:rerun-if-changed=build.rs");
 }
-

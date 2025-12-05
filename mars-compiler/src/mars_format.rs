@@ -433,6 +433,48 @@ pub fn convert_oihw_to_ohwi(
     output
 }
 
+/// Convert float32 weights from OIHW (ONNX) to OHWI (NHWC-friendly) format
+///
+/// OIHW: [out_ch, in_ch, kh, kw] - 4 bytes per element
+/// OHWI: [out_ch, kh, kw, in_ch] - 4 bytes per element
+///
+/// This makes weight access contiguous when iterating over input channels,
+/// which is efficient for NHWC feature format.
+pub fn convert_oihw_to_ohwi_f32(
+    weights: &[u8],
+    out_ch: usize,
+    in_ch: usize,
+    kh: usize,
+    kw: usize,
+) -> Vec<u8> {
+    let total_elements = out_ch * in_ch * kh * kw;
+    let total_bytes = total_elements * 4;  // float32 = 4 bytes
+    let mut output = vec![0u8; total_bytes];
+
+    for o in 0..out_ch {
+        for i in 0..in_ch {
+            for h in 0..kh {
+                for w in 0..kw {
+                    // Source: OIHW [o, i, h, w]
+                    let src_idx = ((o * in_ch + i) * kh + h) * kw + w;
+                    // Dest: OHWI [o, h, w, i]
+                    let dst_idx = ((o * kh + h) * kw + w) * in_ch + i;
+
+                    let src_byte_offset = src_idx * 4;
+                    let dst_byte_offset = dst_idx * 4;
+
+                    if src_byte_offset + 4 <= weights.len() && dst_byte_offset + 4 <= output.len() {
+                        output[dst_byte_offset..dst_byte_offset + 4]
+                            .copy_from_slice(&weights[src_byte_offset..src_byte_offset + 4]);
+                    }
+                }
+            }
+        }
+    }
+
+    output
+}
+
 /// Pack weights from OIHW (ONNX) to NMHWSOIB2 (NNA native format)
 ///
 /// NMHWSOIB2 format for INT8:

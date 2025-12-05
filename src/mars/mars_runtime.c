@@ -20,6 +20,17 @@
 #include "device_internal.h"
 #include "mxu_ops.h"
 
+/* Debug flag - set via mars_set_debug() or MARS_DEBUG env var */
+static int mars_debug_enabled = 0;
+
+void mars_set_debug(int enable) {
+    mars_debug_enabled = enable;
+}
+
+int mars_get_debug(void) {
+    return mars_debug_enabled;
+}
+
 /* Layer timing profiler */
 #define MARS_PROFILE_LAYERS 1
 
@@ -150,10 +161,18 @@ extern void conv2d_float32_mxu(
     int pad_top, int pad_left,
     float *scratch);
 
-/* Set to 1 to use MXU acceleration, 0 for software fallback */
-#ifndef USE_MXU
+extern void conv2d_float32_nhwc(
+    const float *input, int in_h, int in_w, int in_c,
+    const float *weight, int out_c, int kh, int kw,
+    const float *bias,
+    float *output, int out_h, int out_w,
+    int stride_h, int stride_w,
+    int pad_top, int pad_left,
+    int dilation_h, int dilation_w,
+    int activation);
+
+/* Always use MXU acceleration - no fallback for Ingenic devices */
 #define USE_MXU 1
-#endif
 
 /* Align value up to alignment */
 #define ALIGN_UP(x, align) (((x) + (align) - 1) & ~((align) - 1))
@@ -281,6 +300,9 @@ mars_error_t mars_load_memory(const void *data, size_t size, mars_model_t **out_
     }
 
     /* Read tensor descriptors and initialize liveness tracking */
+    fprintf(stderr, "Mars: sizeof(mars_header_t)=%zu sizeof(mars_tensor_t)=%zu sizeof(mars_layer_t)=%zu\n",
+            sizeof(mars_header_t), sizeof(mars_tensor_t), sizeof(mars_layer_t));
+    fflush(stderr);
     for (uint32_t i = 0; i < header.num_tensors; i++) {
         memcpy(&model->tensors[i].desc, ptr, sizeof(mars_tensor_t));
         ptr += sizeof(mars_tensor_t);
@@ -288,6 +310,14 @@ mars_error_t mars_load_memory(const void *data, size_t size, mars_model_t **out_
         model->tensors[i].produced_at = -1;
         model->tensors[i].last_used_at = -1;
         model->tensors[i].buffer_idx = -1;
+        /* Debug: print first few tensor formats */
+        if (i < 3) {
+            fprintf(stderr, "Mars: Tensor %d: name='%s' dtype=%d format=%d ndims=%d shape=[%d,%d,%d,%d]\n",
+                    i, model->tensors[i].desc.name, model->tensors[i].desc.dtype, model->tensors[i].desc.format,
+                    model->tensors[i].desc.ndims, model->tensors[i].desc.shape[0], model->tensors[i].desc.shape[1],
+                    model->tensors[i].desc.shape[2], model->tensors[i].desc.shape[3]);
+            fflush(stderr);
+        }
     }
     fprintf(stderr, "Mars: Tensors loaded\n"); fflush(stderr);
 
@@ -1037,10 +1067,49 @@ static mars_error_t execute_conv2d(mars_model_t *model, mars_runtime_layer_t *la
         }
     }
 
-#if USE_MXU
-    if (is_float) {
-        /* Float32 MXU-accelerated convolution */
-        /* Use end of DDR buffer as scratch space for VPR stores */
+    /* MXU-accelerated convolution paths (Ingenic only - no fallback) */
+    if (mars_debug_enabled) {
+        fprintf(stderr, "  [DBG] is_float=%d is_nhwc=%d\n", is_float, is_nhwc);
+    }
+    if (is_float && is_nhwc) {
+        static int nhwc_conv_count = 0;
+        if (mars_debug_enabled) {
+            fprintf(stderr, "  >>> ENTERING FLOAT32 NHWC CONV PATH (count=%d) <<<\n", nhwc_conv_count);
+            if (nhwc_conv_count < 2) {
+                float *dbg_w = (float *)weight->vaddr;
+                float *dbg_in = (float *)input->vaddr;
+                fprintf(stderr, "  [DEBUG CONV%d] Weight first 20: ", nhwc_conv_count);
+                for (int i = 0; i < 20; i++) fprintf(stderr, "%.4f ", dbg_w[i]);
+                fprintf(stderr, "\n");
+                fprintf(stderr, "  [DEBUG CONV%d] Input first 20: ", nhwc_conv_count);
+                for (int i = 0; i < 20; i++) fprintf(stderr, "%.4f ", dbg_in[i]);
+                fprintf(stderr, "\n");
+            }
+            fprintf(stderr, "  [DBG] params->activation=%d dilation=%dx%d\n",
+                    params->activation, params->dilation_h, params->dilation_w);
+        }
+        nhwc_conv_count++;
+
+        /* Float32 NHWC convolution with fused activation */
+        conv2d_float32_nhwc(
+            (float *)input->vaddr, in_h, in_w, in_c,
+            (float *)weight->vaddr, out_c, params->kernel_h, params->kernel_w,
+            bias ? (float *)bias->vaddr : NULL,
+            (float *)output->vaddr, out_h, out_w,
+            params->stride_h, params->stride_w,
+            pad_top, pad_left,
+            params->dilation_h, params->dilation_w,
+            params->activation
+        );
+
+        if (mars_debug_enabled) {
+            float *out = (float *)output->vaddr;
+            fprintf(stderr, "  [CONV%d OUT] first 20: ", nhwc_conv_count - 1);
+            for (int i = 0; i < 20; i++) fprintf(stderr, "%.4f ", out[i]);
+            fprintf(stderr, "\n");
+        }
+    } else if (is_float) {
+        /* Float32 NCHW convolution */
         float *scratch = (float *)((char *)model->ddr_base + model->ddr_size - 256);
         conv2d_float32_mxu(
             (float *)input->vaddr, in_h, in_w, in_c,
@@ -1054,6 +1123,60 @@ static mars_error_t execute_conv2d(mars_model_t *model, mars_runtime_layer_t *la
     } else if (is_nhwc) {
         /* INT8 NHWC MXU-accelerated convolution with spatial tiling
          * Use tiled version for larger outputs to improve weight reuse */
+        static int int8_nhwc_conv_count = 0;
+
+        /* Debug first 2 INT8 NHWC conv layers */
+        if (int8_nhwc_conv_count < 2) {
+            int8_t *dbg_in = (int8_t *)input->vaddr;
+            int8_t *dbg_w = (int8_t *)weight->vaddr;
+            int32_t *dbg_b = bias ? (int32_t *)bias->vaddr : NULL;
+
+            fprintf(stderr, "  [INT8 CONV%d] Input first 16: ", int8_nhwc_conv_count);
+            for (int i = 0; i < 16; i++) fprintf(stderr, "%d ", dbg_in[i]);
+            fprintf(stderr, "\n");
+
+            fprintf(stderr, "  [INT8 CONV%d] Weight first 16: ", int8_nhwc_conv_count);
+            for (int i = 0; i < 16; i++) fprintf(stderr, "%d ", dbg_w[i]);
+            fprintf(stderr, "\n");
+
+            if (dbg_b) {
+                fprintf(stderr, "  [INT8 CONV%d] Bias first 8: ", int8_nhwc_conv_count);
+                for (int i = 0; i < (out_c < 8 ? out_c : 8); i++) fprintf(stderr, "%d ", dbg_b[i]);
+                fprintf(stderr, "\n");
+            }
+
+            /* Manual dot product for output[0,0,0] = sum(input[0:kh,0:kw,:] * weight[0,:,:,:]) */
+            int32_t manual_sum = 0;
+            int weight_per_oc = params->kernel_h * params->kernel_w * in_c;
+            for (int khi = 0; khi < params->kernel_h; khi++) {
+                for (int kwi = 0; kwi < params->kernel_w; kwi++) {
+                    int ih = khi - pad_top;
+                    int iw = kwi - pad_left;
+                    for (int c = 0; c < in_c; c++) {
+                        int8_t in_val = 0;
+                        if (ih >= 0 && ih < in_h && iw >= 0 && iw < in_w) {
+                            in_val = dbg_in[(ih * in_w + iw) * in_c + c];
+                        }
+                        /* OHWI: weight[o, h, w, i] = w[0 * kh*kw*in_c + khi*kw*in_c + kwi*in_c + c] */
+                        int w_idx = khi * params->kernel_w * in_c + kwi * in_c + c;
+                        int8_t w_val = dbg_w[w_idx];
+                        manual_sum += (int32_t)in_val * (int32_t)w_val;
+                    }
+                }
+            }
+            if (dbg_b) manual_sum += dbg_b[0];
+
+            float combined_scale = (input->desc.scale * weight->desc.scale) / output->desc.scale;
+            int32_t manual_result = (int32_t)(manual_sum * combined_scale + 0.5f);
+            if (manual_result > 127) manual_result = 127;
+            if (manual_result < -128) manual_result = -128;
+
+            fprintf(stderr, "  [INT8 CONV%d] Manual dot@[0,0,0]: sum=%d scaled=%.2f result=%d\n",
+                    int8_nhwc_conv_count, manual_sum, manual_sum * combined_scale, manual_result);
+            fflush(stderr);
+        }
+        int8_nhwc_conv_count++;
+
         if (out_w >= 8) {
             conv2d_int8_nhwc_mxu_tiled(
                 (int8_t *)input->vaddr, in_h, in_w, in_c,
@@ -1077,6 +1200,15 @@ static mars_error_t execute_conv2d(mars_model_t *model, mars_runtime_layer_t *la
                 params->activation  /* Pass activation type: 0=none, 1=relu, 3=leaky */
             );
         }
+
+        /* Debug output after first 2 INT8 NHWC conv layers */
+        if (int8_nhwc_conv_count <= 2) {
+            int8_t *dbg_out = (int8_t *)output->vaddr;
+            fprintf(stderr, "  [INT8 CONV%d] Output first 32: ", int8_nhwc_conv_count - 1);
+            for (int i = 0; i < 32; i++) fprintf(stderr, "%d ", dbg_out[i]);
+            fprintf(stderr, "\n");
+            fflush(stderr);
+        }
     } else {
         /* INT8 NCHW MXU-accelerated convolution */
         conv2d_int8_mxu(
@@ -1089,43 +1221,6 @@ static mars_error_t execute_conv2d(mars_model_t *model, mars_runtime_layer_t *la
             input->desc.scale, weight->desc.scale, output->desc.scale
         );
     }
-#else
-    if (is_float) {
-        /* Float32 software convolution */
-        conv2d_float32_mxu(
-            (float *)input->vaddr, in_h, in_w, in_c,
-            (float *)weight->vaddr, out_c, params->kernel_h, params->kernel_w,
-            bias ? (float *)bias->vaddr : NULL,
-            (float *)output->vaddr, out_h, out_w,
-            params->stride_h, params->stride_w,
-            pad_top, pad_left,
-            NULL
-        );
-    } else if (is_nhwc) {
-        /* INT8 NHWC software convolution with fused activation */
-        conv2d_int8_nhwc_mxu_act(
-            (int8_t *)input->vaddr, in_h, in_w, in_c,
-            (int8_t *)weight->vaddr, out_c, params->kernel_h, params->kernel_w,
-            bias ? (int32_t *)bias->vaddr : NULL,
-            (int8_t *)output->vaddr, out_h, out_w,
-            params->stride_h, params->stride_w,
-            pad_top, pad_left,
-            input->desc.scale, weight->desc.scale, output->desc.scale,
-            params->activation  /* Pass activation type: 0=none, 1=relu, 3=leaky */
-        );
-    } else {
-        /* INT8 NCHW software convolution */
-        conv2d_int8_mxu(
-            (int8_t *)input->vaddr, in_h, in_w, in_c,
-            (int8_t *)weight->vaddr, out_c, params->kernel_h, params->kernel_w,
-            bias ? (int32_t *)bias->vaddr : NULL,
-            (int8_t *)output->vaddr, out_h, out_w,
-            params->stride_h, params->stride_w,
-            pad_top, pad_left,
-            input->desc.scale, weight->desc.scale, output->desc.scale
-        );
-    }
-#endif
 
     /* Apply activation if specified */
     /* NOTE: Activation (ReLU, LeakyReLU) is now applied INSIDE the conv kernel

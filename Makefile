@@ -17,12 +17,15 @@ OBJ_DIR := $(BUILD_DIR)/obj
 LIB_DIR := $(BUILD_DIR)/lib
 BIN_DIR := $(BUILD_DIR)/bin
 
+# libjpeg-turbo for proper JPEG output
+LIBJPEG_DIR := $(CURDIR)/third_party/libjpeg-install
+
 # Compiler flags
 CFLAGS := -Wall -Wextra -O3 -fPIC -funroll-loops
-CFLAGS += -I$(INC_DIR) -I$(SRC_DIR)
+CFLAGS += -I$(INC_DIR) -I$(SRC_DIR) -I$(LIBJPEG_DIR)/include
 CXXFLAGS := -Wall -Wextra -O2 -fPIC -std=c++14 -D_GLIBCXX_USE_CXX11_ABI=1
 CXXFLAGS += -I$(INC_DIR) -I$(SRC_DIR)
-LDFLAGS := -L$(LIB_DIR)
+LDFLAGS := -L$(LIB_DIR) -L$(LIBJPEG_DIR)/lib
 LIBS := -lpthread -lstdc++ -ldl
 
 # Library names
@@ -130,7 +133,7 @@ $(BIN_DIR)/mars_yolo_test: $(SRC_DIR)/mars/mars_yolo_test.c $(OBJ_DIR)/mars_mars
 	@echo "Built Mars YOLO test: $@"
 
 $(BIN_DIR)/mars_detect: $(SRC_DIR)/mars/mars_detect.c $(OBJ_DIR)/mars_mars_runtime.o $(MARS_MXU_OBJS) $(LIB_NNA_STATIC) | $(BIN_DIR)
-	$(CC) $(CFLAGS) $< $(OBJ_DIR)/mars_mars_runtime.o $(MARS_MXU_OBJS) -o $@ $(LDFLAGS) -lnna $(LIBS) -lm
+	$(CC) $(CFLAGS) $< $(OBJ_DIR)/mars_mars_runtime.o $(MARS_MXU_OBJS) -o $@ $(LDFLAGS) -lnna -ljpeg $(LIBS) -lm
 	@echo "Built Mars detect: $@"
 
 $(BIN_DIR)/mars_face: $(SRC_DIR)/mars/mars_face.c $(OBJ_DIR)/mars_mars_runtime.o $(MARS_MXU_OBJS) $(LIB_NNA_STATIC) | $(BIN_DIR)
