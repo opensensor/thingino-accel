@@ -192,9 +192,11 @@ def evaluate(config: dict, weights_path: str):
 
     # Dataset
     data_dir = Path(prep_cfg.get('output_dir', 'datasets/prepared'))
-    val_ann = data_dir / 'annotations' / 'instances_val.json'
+    val_ann = data_dir / 'annotations' / 'instances_val2017.json'
     img_dirs = [
         data_dir / 'images',
+        'combined_dataset/images',
+        'train2017',
         'coco/train2017',
         'coco/val2017',
         'oxford_pets/images',
