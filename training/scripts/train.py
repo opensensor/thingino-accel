@@ -427,16 +427,18 @@ def train(config: dict, qat: bool = False):
     # QAT setup - must be done before moving to GPU
     if qat:
         print("Enabling Quantization-Aware Training (QAT)...")
-        # Set model to training mode for QAT preparation
-        model.train()
         # Use FBGEMM backend for x86 (training), will export to qnnpack-friendly format
         model.qconfig = torch.ao.quantization.get_default_qat_qconfig('fbgemm')
+        # Switch to eval mode for fusion (required by fuse_modules)
+        model.eval()
         # Fuse Conv+BN+ReLU before QAT
         torch.ao.quantization.fuse_modules(model.backbone.stem, [['0.conv', '0.bn', '0.relu'], ['1.conv', '1.bn', '1.relu']], inplace=True)
         torch.ao.quantization.fuse_modules(model.backbone.s1, [['0.conv', '0.bn', '0.relu'], ['1.conv', '1.bn', '1.relu']], inplace=True)
         torch.ao.quantization.fuse_modules(model.backbone.s2, [['0.conv', '0.bn', '0.relu'], ['1.conv', '1.bn', '1.relu']], inplace=True)
         torch.ao.quantization.fuse_modules(model.backbone.s3, [['0.conv', '0.bn', '0.relu'], ['1.conv', '1.bn', '1.relu']], inplace=True)
         torch.ao.quantization.fuse_modules(model.head.head, [['0.conv', '0.bn', '0.relu'], ['1.conv', '1.bn', '1.relu']], inplace=True)
+        # Switch back to train mode for QAT preparation
+        model.train()
         # Prepare for QAT
         model = torch.ao.quantization.prepare_qat(model, inplace=False)
         print("  QAT preparation complete - fake quantization enabled")
