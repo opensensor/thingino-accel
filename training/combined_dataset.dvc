@@ -1,0 +1,6 @@
+outs:
+- md5: 60fc16c3ad2399f68d6e1be0193c0230.dir
+  size: 12101897692
+  nfiles: 73403
+  hash: md5
+  path: combined_dataset

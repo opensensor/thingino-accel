@@ -1,0 +1,6 @@
+outs:
+- md5: f24efadffa0d858ad2f599e2fb934b36.dir
+  size: 821045236
+  nfiles: 25864
+  hash: md5
+  path: oxford_pets

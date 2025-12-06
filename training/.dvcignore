@@ -1,0 +1,29 @@
+# DVC Ignore - patterns of files DVC should not track
+# https://dvc.org/doc/user-guide/dvcignore
+
+# Zip files (keep only extracted data)
+*.zip
+*.tar.gz
+*.tar
+
+# Python cache
+__pycache__
+*.pyc
+.pytest_cache
+
+# Virtual environments
+venv/
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Temp files
+*.tmp
+*.bak
+
+# Logs
+logs/
+*.log

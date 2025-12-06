@@ -3,6 +3,11 @@ magik-toolkit/
 .idea/
 target/
 
+# DVC
+training/.dvc/config.local
+training/.dvc/tmp/
+training/.dvc/cache/
+
 # Training - exclude datasets, models, and generated files
 training/venv/
 training/__pycache__/
@@ -16,25 +21,31 @@ training/*.log
 training/*.zip
 training/*.tar
 training/*.tar.gz
-training/train2017/
-training/val2017/
-training/coco/
-training/coco_mini/
-training/coco_3class/
-training/coco_filtered/
-training/coco_full_3class/
-training/oxford_pets/
-training/oxford_pets_coco/
-training/voc_data/
-training/combined_dataset/
-training/balanced_4class/
-training/security_dataset/
-training/checkpoints/
-training/checkpoints_full/
-training/runs/
-training/detection_results*/
-training/test_results*/
+# Dataset directories - ignore contents, but allow .dvc and .gitignore files
+training/train2017/**
+training/val2017/**
+training/coco/**
+training/coco_mini/**
+training/coco_3class/**
+training/coco_filtered/**
+training/coco_full_3class/**
+training/oxford_pets/**
+training/oxford_pets_coco/**
+training/voc_data/**
+training/combined_dataset/**
+training/balanced_4class/**
+training/security_dataset/**
+training/checkpoints/**
+training/checkpoints_full/**
+training/runs/**
+training/detection_results*/**
+training/test_results*/**
 training/*.jpg
+
+# DVC pointer files and .gitignore must be tracked in git
+!training/*.dvc
+!training/**/*.dvc
+!training/**/.gitignore
 
 # Keep training scripts and model definitions
 !training/README.md
@@ -54,3 +65,14 @@ training/*.jpg
 !training/prepare_security_dataset.py
 !training/rebalance_coco_person_cat_dog.py
 !training/create_balanced_val.py
+!training/DVC_SETUP.md
+!training/.dvc/config
+!training/.dvc/.gitignore
+!training/.dvc/config.local.example
+!training/dvc.yaml
+!training/dvc.lock
+!training/params.yaml
+!training/requirements.txt
+!training/scripts/
+!training/configs/
+!training/metrics/

@@ -1,0 +1,5 @@
+[core]
+    remote = storage
+['remote "storage"']
+    url = s3://thingino-accel/training
+    endpointurl = https://nyc3.digitaloceanspaces.com
