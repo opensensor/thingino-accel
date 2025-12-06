@@ -520,10 +520,45 @@ def main():
     parser = argparse.ArgumentParser(description='Train TinyDet')
     parser.add_argument('--config', type=str, default='params.yaml')
     parser.add_argument('--seed', type=int, default=42)
+    # Config overrides for experiment runner
+    parser.add_argument('--epochs', type=int, help='Override epochs')
+    parser.add_argument('--batch-size', type=int, help='Override batch size')
+    parser.add_argument('--learning-rate', type=float, help='Override learning rate')
+    parser.add_argument('--weight-decay', type=float, help='Override weight decay')
+    parser.add_argument('--warmup-epochs', type=int, help='Override warmup epochs')
+    parser.add_argument('--output-dir', type=str, help='Override output directory')
+    parser.add_argument('--base-channels', type=int, help='Override model base channels')
+    parser.add_argument('--lr-schedule', type=str, choices=['step', 'cosine'], help='LR schedule type')
+    parser.add_argument('--use-focal-loss', type=bool, help='Use focal loss')
+    parser.add_argument('--focal-alpha', type=float, default=0.25, help='Focal loss alpha')
+    parser.add_argument('--focal-gamma', type=float, default=2.0, help='Focal loss gamma')
     args = parser.parse_args()
 
     set_seed(args.seed)
     config = load_config(args.config)
+
+    # Apply command-line overrides
+    if args.epochs:
+        config['train']['epochs'] = args.epochs
+    if args.batch_size:
+        config['train']['batch_size'] = args.batch_size
+    if args.learning_rate:
+        config['train']['learning_rate'] = args.learning_rate
+    if args.weight_decay:
+        config['train']['weight_decay'] = args.weight_decay
+    if args.warmup_epochs:
+        config['train']['warmup_epochs'] = args.warmup_epochs
+    if args.output_dir:
+        config['train']['output_dir'] = args.output_dir
+    if args.base_channels:
+        config['model']['base_channels'] = args.base_channels
+    if args.lr_schedule:
+        config['train']['lr_schedule'] = args.lr_schedule
+    if args.use_focal_loss:
+        config['train']['use_focal_loss'] = args.use_focal_loss
+        config['train']['focal_alpha'] = args.focal_alpha
+        config['train']['focal_gamma'] = args.focal_gamma
+
     train(config)
 
 
