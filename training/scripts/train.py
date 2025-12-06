@@ -369,12 +369,14 @@ def train(config: dict):
     print(f"Using device: {device}")
 
     # Datasets
-    data_dir = Path(prep_cfg.get('output_dir', 'datasets/prepared'))
-    train_ann = data_dir / 'annotations' / 'instances_train.json'
-    val_ann = data_dir / 'annotations' / 'instances_val.json'
+    data_dir = Path(prep_cfg.get('output_dir', 'combined_dataset'))
+    train_ann = data_dir / 'annotations' / 'instances_train2017.json'
+    val_ann = data_dir / 'annotations' / 'instances_val2017.json'
 
     img_dirs = [
         data_dir / 'images',
+        'combined_dataset/images',
+        'train2017',
         'coco/train2017',
         'coco/val2017',
         'oxford_pets/images',

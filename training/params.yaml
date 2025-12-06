@@ -21,7 +21,7 @@ classes:
 prepare:
   coco_dir: "coco"
   oxford_pets_dir: "oxford_pets"
-  output_dir: "datasets/prepared"
+  output_dir: "combined_dataset"
   max_person_images: 10000
   max_vehicle_images: 10000
   val_split: 0.1
