@@ -37,7 +37,6 @@ EXPERIMENTS = [
             "learning_rate": 0.0005,
             "weight_decay": 0.0001,
             "warmup_epochs": 15,
-            # Note: base_channels handled via model modification
         }
     },
     {
@@ -50,6 +49,18 @@ EXPERIMENTS = [
             "weight_decay": 0.0001,
             "warmup_epochs": 20,
         }
+    },
+    {
+        "name": "qat_200ep",
+        "description": "Quantization-Aware Training for INT8 deployment",
+        "args": {
+            "epochs": 200,
+            "batch_size": 64,
+            "learning_rate": 0.0005,  # Slightly lower LR for QAT stability
+            "weight_decay": 0.0001,
+            "warmup_epochs": 10,
+        },
+        "qat": True  # Enable QAT flag
     },
 ]
 
@@ -91,13 +102,16 @@ def run_experiment(exp):
     name = exp["name"]
     args = exp["args"]
     output_dir = f"runs/experiments/{name}"
-    
+    is_qat = exp.get("qat", False)
+
     print(f"\n{'=' * 60}")
     print(f"EXPERIMENT: {name}")
     print(f"Description: {exp['description']}")
     print(f"Config: {args}")
+    if is_qat:
+        print("QAT: ENABLED")
     print("=" * 60)
-    
+
     # Build command
     cmd_parts = [
         "python scripts/train.py",
@@ -107,20 +121,25 @@ def run_experiment(exp):
     for key, value in args.items():
         arg_name = key.replace("_", "-")
         cmd_parts.append(f"--{arg_name} {value}")
-    
+
+    # Add QAT flag if enabled
+    if is_qat:
+        cmd_parts.append("--qat")
+
     cmd = " ".join(cmd_parts)
-    
+
     t0 = time.time()
     success, output = run_command(cmd)
     elapsed = time.time() - t0
-    
+
     print(f"\nExperiment {name} completed in {elapsed/60:.1f} minutes")
-    
+
     return {
         "name": name,
         "success": success,
         "elapsed_minutes": elapsed / 60,
         "output_dir": output_dir,
+        "qat": is_qat,
     }
 
 

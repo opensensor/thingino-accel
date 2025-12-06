@@ -28,6 +28,14 @@ from torch.utils.data import Dataset, DataLoader
 from PIL import Image, ImageEnhance, ImageFilter
 from tqdm import tqdm
 
+# Quantization imports
+try:
+    from torch.ao.quantization import get_default_qat_qconfig, prepare_qat, convert
+    from torch.ao.quantization.quantize_fx import prepare_qat_fx, convert_fx
+    HAS_QUANTIZATION = True
+except ImportError:
+    HAS_QUANTIZATION = False
+
 # Add parent dir for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from tinydet import TinyDet
@@ -338,12 +346,20 @@ class DetectionDataset(Dataset):
 # Training Loop
 # ============================================================================
 
-def train(config: dict):
-    """Main training function."""
+def train(config: dict, qat: bool = False):
+    """Main training function.
+
+    Args:
+        config: Training configuration dict
+        qat: If True, use Quantization-Aware Training
+    """
     # Extract config
     model_cfg = config.get('model', {})
     train_cfg = config.get('train', {})
     prep_cfg = config.get('prepare', {})
+
+    if qat and not HAS_QUANTIZATION:
+        raise RuntimeError("QAT requested but PyTorch quantization not available")
 
     num_classes = model_cfg.get('num_classes', 4)
     img_h = model_cfg.get('input_height', 192)
@@ -404,9 +420,28 @@ def train(config: dict):
     )
 
     # Model
-    model = TinyDet(num_classes=num_classes).to(device)
+    model = TinyDet(num_classes=num_classes)
     param_count = sum(p.numel() for p in model.parameters())
     print(f"Model: {param_count:,} parameters")
+
+    # QAT setup - must be done before moving to GPU
+    if qat:
+        print("Enabling Quantization-Aware Training (QAT)...")
+        # Set model to training mode for QAT preparation
+        model.train()
+        # Use FBGEMM backend for x86 (training), will export to qnnpack-friendly format
+        model.qconfig = torch.ao.quantization.get_default_qat_qconfig('fbgemm')
+        # Fuse Conv+BN+ReLU before QAT
+        torch.ao.quantization.fuse_modules(model.backbone.stem, [['0.conv', '0.bn', '0.relu'], ['1.conv', '1.bn', '1.relu']], inplace=True)
+        torch.ao.quantization.fuse_modules(model.backbone.s1, [['0.conv', '0.bn', '0.relu'], ['1.conv', '1.bn', '1.relu']], inplace=True)
+        torch.ao.quantization.fuse_modules(model.backbone.s2, [['0.conv', '0.bn', '0.relu'], ['1.conv', '1.bn', '1.relu']], inplace=True)
+        torch.ao.quantization.fuse_modules(model.backbone.s3, [['0.conv', '0.bn', '0.relu'], ['1.conv', '1.bn', '1.relu']], inplace=True)
+        torch.ao.quantization.fuse_modules(model.head.head, [['0.conv', '0.bn', '0.relu'], ['1.conv', '1.bn', '1.relu']], inplace=True)
+        # Prepare for QAT
+        model = torch.ao.quantization.prepare_qat(model, inplace=False)
+        print("  QAT preparation complete - fake quantization enabled")
+
+    model = model.to(device)
 
     # Loss
     criterion = DetectionLoss(
@@ -503,9 +538,27 @@ def train(config: dict):
     # Save final
     torch.save(model.state_dict(), output_dir / 'tinydet_final.pth')
 
+    # Convert QAT model to quantized model and save
+    if qat:
+        print("\nConverting QAT model to quantized format...")
+        model.eval()
+        model_cpu = model.cpu()
+        model_int8 = torch.ao.quantization.convert(model_cpu, inplace=False)
+        torch.save(model_int8.state_dict(), output_dir / 'tinydet_int8.pth')
+
+        # Also save a scripted version for easier deployment
+        try:
+            example_input = torch.randn(1, 3, img_h, img_w)
+            scripted = torch.jit.trace(model_int8, example_input)
+            scripted.save(str(output_dir / 'tinydet_int8.pt'))
+            print(f"  Saved quantized model: tinydet_int8.pth, tinydet_int8.pt")
+        except Exception as e:
+            print(f"  Warning: Could not save scripted model: {e}")
+            print(f"  Saved quantized model: tinydet_int8.pth")
+
     # Save metrics
     with open(metrics_dir / 'train_metrics.json', 'w') as f:
-        json.dump({'best_loss': best_loss, 'epochs': epochs, 'final_loss': epoch_loss}, f, indent=2)
+        json.dump({'best_loss': best_loss, 'epochs': epochs, 'final_loss': epoch_loss, 'qat': qat}, f, indent=2)
 
     # Save loss curve CSV for DVC plots
     with open(metrics_dir / 'loss_curve.csv', 'w') as f:
@@ -516,6 +569,8 @@ def train(config: dict):
     print("\n" + "=" * 60)
     print(f"Training complete! Best val loss: {best_loss:.4f}")
     print(f"Checkpoints saved to: {output_dir}")
+    if qat:
+        print("QAT mode: INT8 quantized model saved")
 
 
 def main():
@@ -534,6 +589,7 @@ def main():
     parser.add_argument('--use-focal-loss', type=bool, help='Use focal loss')
     parser.add_argument('--focal-alpha', type=float, default=0.25, help='Focal loss alpha')
     parser.add_argument('--focal-gamma', type=float, default=2.0, help='Focal loss gamma')
+    parser.add_argument('--qat', action='store_true', help='Enable Quantization-Aware Training')
     args = parser.parse_args()
 
     set_seed(args.seed)
@@ -561,7 +617,7 @@ def main():
         config['train']['focal_alpha'] = args.focal_alpha
         config['train']['focal_gamma'] = args.focal_gamma
 
-    train(config)
+    train(config, qat=args.qat)
 
 
 if __name__ == '__main__':
