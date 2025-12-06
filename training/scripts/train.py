@@ -214,9 +214,14 @@ class DetectionDataset(Dataset):
                     class_counts[ann['category_id']] += 1
 
         total = sum(class_counts) + 1e-6
+        # Strong inverse-frequency weighting to handle class imbalance
+        # person/vehicle have 10-12x more samples than cat/dog
         self.class_weights = torch.tensor([
-            (total / (num_classes * (c + 1))) ** 0.5 for c in class_counts
+            total / (num_classes * max(c, 1)) for c in class_counts
         ])
+        # Normalize so min weight = 1.0
+        self.class_weights = self.class_weights / self.class_weights.min()
+        print(f"Class weights: {dict(zip(['person', 'vehicle', 'cat', 'dog'], self.class_weights.tolist()))}")
 
     def __len__(self):
         return len(self.img_ids)
@@ -374,7 +379,7 @@ def train(config: dict, qat: bool = False):
     warmup_epochs = train_cfg.get('warmup_epochs', 5)
     obj_weight = train_cfg.get('obj_loss_weight', 5.0)
     box_weight = train_cfg.get('box_loss_weight', 2.0)
-    cls_weight = train_cfg.get('cls_loss_weight', 1.0)
+    cls_weight = train_cfg.get('cls_loss_weight', 3.0)  # Increased for better class discrimination
     mosaic_prob = train_cfg.get('mosaic_prob', 0.3)
     label_smoothing = train_cfg.get('label_smoothing', 0.02)
     save_every = train_cfg.get('save_every', 10)
