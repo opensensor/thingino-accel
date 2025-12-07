@@ -28,8 +28,8 @@ from tinydet import TinyDet
 
 # Configuration
 BATCH_SIZE = 32
-EPOCHS = 150
-LR = 1e-3
+EPOCHS = 100  # Fine-tuning doesn't need as many epochs
+LR = 2e-4  # Lower LR for fine-tuning (was 1e-3)
 IMG_W, IMG_H = 320, 192  # W, H
 GRID_W, GRID_H = 20, 12  # W, H (stride 16)
 NUM_CLASSES = 4
@@ -40,6 +40,8 @@ WARMUP_EPOCHS = 5
 NEG_POS_RATIO = 100.0  # Much higher ratio - most cells should be negative
 LABEL_SMOOTHING = 0.02
 OBJ_LOSS_WEIGHT = 5.0  # Higher weight on objectness to suppress false positives
+BOX_LOSS_WEIGHT = 3.0  # Prioritize bounding box accuracy over classification
+CLS_LOSS_WEIGHT = 0.5  # Lower classification weight - localization matters more
 
 
 def compute_iou(box1, box2):
@@ -672,8 +674,15 @@ def train():
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
     # Output directory
-    out_dir = Path('runs/improved_v2')
+    out_dir = Path('runs/localization_focus')
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Try to load pretrained weights from best previous model
+    pretrained_path = Path('runs/improved_v2/tinydet_best.pth')
+    if pretrained_path.exists():
+        print(f"Loading pretrained weights from {pretrained_path}")
+        model.load_state_dict(torch.load(pretrained_path, map_location=device, weights_only=True))
+        print("  Loaded successfully - fine-tuning from improved_v2")
 
     best_mAP = 0.0
     best_loss = float('inf')
@@ -694,8 +703,8 @@ def train():
             outputs = model(imgs)
 
             obj_loss, box_loss, cls_loss = criterion(outputs, targets, epoch)
-            # High objectness weight to suppress false positives
-            loss = OBJ_LOSS_WEIGHT * obj_loss + 2.0 * box_loss + 1.0 * cls_loss
+            # Prioritize localization: 5*obj + 3*box + 0.5*cls
+            loss = OBJ_LOSS_WEIGHT * obj_loss + BOX_LOSS_WEIGHT * box_loss + CLS_LOSS_WEIGHT * cls_loss
 
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 10.0)
@@ -728,7 +737,7 @@ def train():
                 outputs = model(imgs)
 
                 obj_loss, box_loss, cls_loss = criterion(outputs, targets, epoch)
-                val_loss += (OBJ_LOSS_WEIGHT * obj_loss + 2.0 * box_loss + 1.0 * cls_loss).item()
+                val_loss += (OBJ_LOSS_WEIGHT * obj_loss + BOX_LOSS_WEIGHT * box_loss + CLS_LOSS_WEIGHT * cls_loss).item()
 
                 # Decode predictions for mAP
                 preds = decode_predictions(outputs, conf_thresh=0.1)

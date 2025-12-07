@@ -391,8 +391,11 @@ def train(config: dict, qat: bool = False):
 
     # Datasets
     data_dir = Path(prep_cfg.get('output_dir', 'combined_dataset'))
-    train_ann = data_dir / 'annotations' / 'instances_train2017.json'
-    val_ann = data_dir / 'annotations' / 'instances_val2017.json'
+    # Support custom annotation paths or default to instances_train2017.json
+    train_ann_name = prep_cfg.get('train_ann', 'annotations/instances_train2017.json')
+    val_ann_name = prep_cfg.get('val_ann', 'annotations/instances_val2017.json')
+    train_ann = data_dir / train_ann_name
+    val_ann = data_dir / val_ann_name
 
     img_dirs = [
         data_dir / 'images',
@@ -428,6 +431,14 @@ def train(config: dict, qat: bool = False):
     model = TinyDet(num_classes=num_classes)
     param_count = sum(p.numel() for p in model.parameters())
     print(f"Model: {param_count:,} parameters")
+
+    # Resume from checkpoint if specified
+    resume_from = train_cfg.get('resume_from', None)
+    if resume_from and Path(resume_from).exists():
+        print(f"Resuming from checkpoint: {resume_from}")
+        state_dict = torch.load(resume_from, map_location='cpu')
+        model.load_state_dict(state_dict)
+        print("  Checkpoint loaded successfully")
 
     # QAT setup - must be done before moving to GPU
     if qat:

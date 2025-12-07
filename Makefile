@@ -18,7 +18,7 @@ LIB_DIR := $(BUILD_DIR)/lib
 BIN_DIR := $(BUILD_DIR)/bin
 
 # libjpeg-turbo for proper JPEG output
-LIBJPEG_DIR := $(CURDIR)/third_party/libjpeg-install
+LIBJPEG_DIR := $(CURDIR)/third_party/libjpeg
 
 # Compiler flags
 CFLAGS := -Wall -Wextra -O3 -fPIC -funroll-loops
@@ -99,8 +99,14 @@ $(LIB_VENUS_SHARED): $(CXX_OBJS) $(C_OBJS) | $(LIB_DIR)
 	$(CXX) -shared -o $@ $^ $(LIBS)
 	@echo "Built shared library: $@"
 
-# Build libraries (both NNA and Venus)
-lib: $(LIB_NNA_STATIC) $(LIB_NNA_SHARED) $(LIB_VENUS_STATIC) $(LIB_VENUS_SHARED)
+# Build libraries (both NNA and Venus) and copy libjpeg
+lib: $(LIB_NNA_STATIC) $(LIB_NNA_SHARED) $(LIB_VENUS_STATIC) $(LIB_VENUS_SHARED) copy-libjpeg
+
+# Copy libjpeg to build/lib for deployment
+.PHONY: copy-libjpeg
+copy-libjpeg: | $(LIB_DIR)
+	cp -a $(LIBJPEG_DIR)/lib/libjpeg.so* $(LIB_DIR)/
+	@echo "Copied libjpeg to $(LIB_DIR)"
 
 # Build generic C examples (no extra objects)
 $(BIN_DIR)/%: $(EXAMPLES_DIR)/%.c $(LIB_NNA_STATIC) | $(BIN_DIR)
