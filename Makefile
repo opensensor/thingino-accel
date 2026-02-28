@@ -190,7 +190,9 @@ MXUV3_TEST_BINS := \
 	$(BIN_DIR)/mxuv3_maxmin_test \
 	$(BIN_DIR)/mxuv3_memcpy_bench \
 	$(BIN_DIR)/mxuv3_pixclamp_test \
-	$(BIN_DIR)/mxuv3_int_arith_probe
+	$(BIN_DIR)/mxuv3_int_arith_probe \
+	$(BIN_DIR)/mxuv3_shift_probe \
+	$(BIN_DIR)/mxuv3_shift_verify
 
 mxuv3-tests: $(MXUV3_TEST_BINS)
 	@echo "Built MXUv3 test suite:" $(MXUV3_TEST_BINS)
@@ -242,6 +244,14 @@ $(BIN_DIR)/mxuv3_pixclamp_test: tools/mxuv3_pixclamp_test.c | $(BIN_DIR)
 $(BIN_DIR)/mxuv3_int_arith_probe: tools/mxuv3_int_arith_probe.c | $(BIN_DIR)
 	$(CC) $(CFLAGS) -I$(INC_DIR) $< -o $@
 	@echo "Built MXUv3 integer arithmetic probe: $@"
+
+$(BIN_DIR)/mxuv3_shift_probe: tools/mxuv3_shift_probe.c | $(BIN_DIR)
+	$(CC) $(CFLAGS) -I$(INC_DIR) $< -o $@
+	@echo "Built MXUv3 shift/XOR probe: $@"
+
+$(BIN_DIR)/mxuv3_shift_verify: tools/mxuv3_shift_verify.c | $(BIN_DIR)
+	$(CC) $(CFLAGS) -I$(INC_DIR) $< -o $@
+	@echo "Built MXUv3 shift verification: $@"
 
 # Mars Conv2D benchmark
 $(BIN_DIR)/mars_conv_bench: $(EXAMPLES_DIR)/mars_conv_bench.c $(OBJ_DIR)/mars_mars_nn_hw.o $(OBJ_DIR)/mars_mars_math.o $(OBJ_DIR)/mars_mxu_ops.o $(LIB_NNA_STATIC) | $(BIN_DIR)

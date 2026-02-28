@@ -500,6 +500,60 @@ static inline void mxuv3_memset_64(void *dst, uint8_t value, size_t size) {
 } while(0)
 
 /*
+ * =============================================================================
+ * VPR Shift Instructions (hardware-verified on A1/T41)
+ * =============================================================================
+ *
+ * Immediate shift (rs=21): VPR[sa] = VPR[rt] << rd
+ *   rd field is the shift amount (0-31), NOT a VPR register.
+ *   fn=33: SLL (left), fn=50: SRL (logical right)
+ *
+ * Variable shift (rs=17): VPR[sa] = VPR[rt] << VPR[rd] per-element
+ *   fn=33: SLL word (16 x int32), fn=34: SLL halfword (32 x int16)
+ *   fn=50: SRL word (logical right)
+ */
+
+/* Immediate shift left by constant amount (all elements) */
+#define VPR_SLLW_IMM(vrd, vrs, amt) do { \
+    __asm__ __volatile__( \
+        ".word %0\n sync\n" \
+        :: "i"(MXUV3_COP2_INST(21, vrs, amt, vrd, 33)) \
+        : "memory"); \
+} while(0)
+
+/* Immediate logical shift right by constant amount (all elements) */
+#define VPR_SRLW_IMM(vrd, vrs, amt) do { \
+    __asm__ __volatile__( \
+        ".word %0\n sync\n" \
+        :: "i"(MXUV3_COP2_INST(21, vrs, amt, vrd, 50)) \
+        : "memory"); \
+} while(0)
+
+/* Variable shift left — int16 elements, shift by VPR[vramt] per-element */
+#define VPR_SLLH_VAR(vrd, vrs, vramt) do { \
+    __asm__ __volatile__( \
+        ".word %0\n sync\n" \
+        :: "i"(MXUV3_COP2_INST(17, vrs, vramt, vrd, 34)) \
+        : "memory"); \
+} while(0)
+
+/* Variable shift left — int32 elements */
+#define VPR_SLLW_VAR(vrd, vrs, vramt) do { \
+    __asm__ __volatile__( \
+        ".word %0\n sync\n" \
+        :: "i"(MXUV3_COP2_INST(17, vrs, vramt, vrd, 33)) \
+        : "memory"); \
+} while(0)
+
+/* Variable logical shift right — int32 elements */
+#define VPR_SRLW_VAR(vrd, vrs, vramt) do { \
+    __asm__ __volatile__( \
+        ".word %0\n sync\n" \
+        :: "i"(MXUV3_COP2_INST(17, vrs, vramt, vrd, 50)) \
+        : "memory"); \
+} while(0)
+
+/*
  * VPR_MUL - Vector Multiply (16 floats) - IN-PLACE
  * VPR[dst] = VPR[src] * VPR[dst]
  * Hardware constraint: rd must equal sa
