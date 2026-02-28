@@ -59,7 +59,7 @@ CXX_EXAMPLES := yolo_detect
 CXX_EXAMPLE_BINS := $(patsubst %,$(BIN_DIR)/%,$(CXX_EXAMPLES))
 
 # Targets
-.PHONY: all clean lib examples install
+.PHONY: all clean lib examples install mxuv3-tests
 
 all: lib examples
 
@@ -174,6 +174,75 @@ $(BIN_DIR)/oram_bench: tools/oram_bench.c | $(BIN_DIR)
 	$(CC) $(CFLAGS) $< -o $@
 	@echo "Built ORAM benchmark: $@"
 
+# ---------------------------------------------------------------------------
+# MXUv3 validation microtests (for XBurst2 / T41)
+# ---------------------------------------------------------------------------
+
+MXUV3_TEST_BINS := \
+	$(BIN_DIR)/mxu_test \
+	$(BIN_DIR)/mxuv3_sum_test \
+	$(BIN_DIR)/mxuv3_sa0_offset_test \
+	$(BIN_DIR)/mxuv3_s4mac_test \
+	$(BIN_DIR)/mxuv3_blockclear_bench \
+	$(BIN_DIR)/mxuv3_f32_vec_test \
+	$(BIN_DIR)/mxuv3_vpr_zero_test \
+	$(BIN_DIR)/mxuv3_xr_byte_ops_test \
+	$(BIN_DIR)/mxuv3_maxmin_test \
+	$(BIN_DIR)/mxuv3_memcpy_bench \
+	$(BIN_DIR)/mxuv3_pixclamp_test \
+	$(BIN_DIR)/mxuv3_int_arith_probe
+
+mxuv3-tests: $(MXUV3_TEST_BINS)
+	@echo "Built MXUv3 test suite:" $(MXUV3_TEST_BINS)
+
+$(BIN_DIR)/mxu_test: $(SRC_DIR)/mars/mxu_test.c | $(BIN_DIR)
+	$(CC) $(CFLAGS) -I$(INC_DIR) -I$(SRC_DIR) $< -o $@ -lm
+	@echo "Built MXU instruction test: $@"
+
+$(BIN_DIR)/mxuv3_sum_test: tools/mxuv3_sum_test.c | $(BIN_DIR)
+	$(CC) $(CFLAGS) -I$(INC_DIR) $< -o $@
+	@echo "Built MXUv3 sum-register test: $@"
+
+$(BIN_DIR)/mxuv3_sa0_offset_test: tools/mxuv3_sa0_offset_test.c | $(BIN_DIR)
+	$(CC) $(CFLAGS) -I$(INC_DIR) $< -o $@
+	@echo "Built MXUv3 SA0 offset test: $@"
+
+$(BIN_DIR)/mxuv3_s4mac_test: tools/mxuv3_s4mac_test.c | $(BIN_DIR)
+	$(CC) $(CFLAGS) -I$(INC_DIR) $< -o $@
+	@echo "Built MXUv3 S4MAC test: $@"
+
+$(BIN_DIR)/mxuv3_blockclear_bench: tools/mxuv3_blockclear_bench.c | $(BIN_DIR)
+	$(CC) $(CFLAGS) -I$(INC_DIR) $< -o $@
+	@echo "Built MXUv3 block-clear benchmark: $@"
+
+$(BIN_DIR)/mxuv3_f32_vec_test: tools/mxuv3_f32_vec_test.c $(OBJ_DIR)/mars_mars_nn_hw.o $(OBJ_DIR)/mars_mxu_ops.o | $(BIN_DIR)
+	$(CC) $(CFLAGS) -I$(INC_DIR) -I$(SRC_DIR) $< $(OBJ_DIR)/mars_mars_nn_hw.o $(OBJ_DIR)/mars_mxu_ops.o -o $@ -lm
+	@echo "Built MXUv3 float32 vec test: $@"
+
+$(BIN_DIR)/mxuv3_vpr_zero_test: tools/mxuv3_vpr_zero_test.c | $(BIN_DIR)
+	$(CC) $(CFLAGS) -I$(INC_DIR) $< -o $@
+	@echo "Built MXUv3 VPR_ZERO test: $@"
+
+$(BIN_DIR)/mxuv3_xr_byte_ops_test: tools/mxuv3_xr_byte_ops_test.c | $(BIN_DIR)
+	$(CC) $(CFLAGS) -I$(INC_DIR) $< -o $@
+	@echo "Built MXUv3 XR byte-ops test: $@"
+
+$(BIN_DIR)/mxuv3_maxmin_test: tools/mxuv3_maxmin_test.c | $(BIN_DIR)
+	$(CC) $(CFLAGS) -I$(INC_DIR) $< -o $@
+	@echo "Built MXUv3 MAX/MIN test: $@"
+
+$(BIN_DIR)/mxuv3_memcpy_bench: tools/mxuv3_memcpy_bench.c | $(BIN_DIR)
+	$(CC) $(CFLAGS) -I$(INC_DIR) $< -o $@
+	@echo "Built MXUv3 memcpy benchmark: $@"
+
+$(BIN_DIR)/mxuv3_pixclamp_test: tools/mxuv3_pixclamp_test.c | $(BIN_DIR)
+	$(CC) $(CFLAGS) -I$(INC_DIR) $< -o $@
+	@echo "Built MXUv3 pixel clamping test: $@"
+
+$(BIN_DIR)/mxuv3_int_arith_probe: tools/mxuv3_int_arith_probe.c | $(BIN_DIR)
+	$(CC) $(CFLAGS) -I$(INC_DIR) $< -o $@
+	@echo "Built MXUv3 integer arithmetic probe: $@"
+
 # Mars Conv2D benchmark
 $(BIN_DIR)/mars_conv_bench: $(EXAMPLES_DIR)/mars_conv_bench.c $(OBJ_DIR)/mars_mars_nn_hw.o $(OBJ_DIR)/mars_mars_math.o $(OBJ_DIR)/mars_mxu_ops.o $(LIB_NNA_STATIC) | $(BIN_DIR)
 	$(CC) $(CFLAGS) $< $(OBJ_DIR)/mars_mars_nn_hw.o $(OBJ_DIR)/mars_mars_math.o $(OBJ_DIR)/mars_mxu_ops.o -o $@ $(LDFLAGS) -lnna $(LIBS) -lm
@@ -198,7 +267,7 @@ $(BIN_DIR)/sod_demo: sod/sod_demo.c sod/sod.c $(OBJ_DIR)/sod_mxu.o | $(BIN_DIR)
 	$(CC) $(CFLAGS) -I$(INC_DIR) -Isod -I. sod/sod_demo.c $(OBJ_DIR)/sod_mxu.o -o $@ -lm
 	@echo "Built SOD demo: $@"
 
-examples: $(EXAMPLE_BINS) $(CXX_EXAMPLE_BINS) $(BIN_DIR)/mars_test $(BIN_DIR)/mars_detect $(BIN_DIR)/nna_dma_test $(BIN_DIR)/mars_nna_bench $(BIN_DIR)/mars_conv_bench $(BIN_DIR)/mars_layer_bench $(BIN_DIR)/mars_inference_test $(BIN_DIR)/sod_demo
+examples: $(EXAMPLE_BINS) $(CXX_EXAMPLE_BINS) $(BIN_DIR)/mars_test $(BIN_DIR)/mars_detect $(BIN_DIR)/nna_dma_test $(BIN_DIR)/mars_nna_bench $(BIN_DIR)/mars_conv_bench $(BIN_DIR)/mars_layer_bench $(BIN_DIR)/mars_inference_test $(BIN_DIR)/sod_demo $(MXUV3_TEST_BINS)
 
 # Install (for cross-compilation, just copy to build dir)
 install: all

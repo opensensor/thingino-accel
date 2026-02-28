@@ -11,9 +11,21 @@
 #include <string.h>
 #include <stdlib.h>
 #include <sys/time.h>
+#include <signal.h>
+#include <setjmp.h>
 
 #ifdef __mips__
 #include "mxuv3.h"
+
+/* Simple SIGILL trap so we can probe optional/undocumented MXU opcodes
+ * without terminating the whole test binary.
+ */
+static sigjmp_buf g_sigill_jmp;
+static void sigill_handler(int sig)
+{
+    (void)sig;
+    siglongjmp(g_sigill_jmp, 1);
+}
 
 static inline long long get_time_us(void) {
     struct timeval tv;
@@ -419,8 +431,22 @@ int main(void) {
     printf("  XR2 round-trip: input=0x%08x, output=0x%08x %s\n",
            val32, result32, val32 == result32 ? "OK" : "FAIL");
 
-    /* Test Q8MUL: xr1 = low(xr2 * xr3), xr4 = high(xr2 * xr3) */
-    printf("\n  Testing Q8MUL (Quad 8-bit multiply)...\n");
+	    /* Test Q8MUL: xr1 = low(xr2 * xr3), xr4 = high(xr2 * xr3) */
+	    printf("\n  Testing Q8MUL (Quad 8-bit multiply)...\n");
+
+	    /* Some classic MXU pool instructions are not present on all XBurst2
+	     * variants/kernels. Trap SIGILL so we can continue the test suite.
+	     */
+	    struct sigaction sa_old, sa_new;
+	    memset(&sa_new, 0, sizeof(sa_new));
+	    sa_new.sa_handler = sigill_handler;
+	    sigemptyset(&sa_new.sa_mask);
+	    sigaction(SIGILL, &sa_new, &sa_old);
+	    if (sigsetjmp(g_sigill_jmp, 1) != 0) {
+	        printf("  Q8MUL: SIGILL (unsupported on this CPU/kernel)\n");
+	        sigaction(SIGILL, &sa_old, NULL);
+	        goto after_q8mul;
+	    }
 
     /* Load test values into XR2 and XR3 */
     /* XR2 = 0x02020202 (all 2s) */
@@ -469,6 +495,10 @@ int main(void) {
     printf("    XR2 = 0x10101010, XR3 = 0x10101010\n");
     printf("    XR1 (low)  = 0x%08x (expected 0x00000000)\n", xr1_result);
     printf("    XR4 (high) = 0x%08x (expected 0x01010101)\n", xr4_result);
+
+	    sigaction(SIGILL, &sa_old, NULL);
+
+	after_q8mul:
 
     /* Test the full compute sequence from libvenus
      *

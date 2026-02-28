@@ -35,7 +35,7 @@
  *   Uses $t0 as base address
  */
 #define LA0_VPR(vpr, ptr) do { \
-    register void *_base __asm__("t0") = (ptr); \
+	    register const void *_base __asm__("t0") = (ptr); \
     __asm__ __volatile__( \
         ".set push\n" \
         ".set noreorder\n" \
@@ -389,10 +389,15 @@ static inline void mxuv3_memset_64(void *dst, uint8_t value, size_t size) {
     } while (0)
 
 /*
- * VPR_ADD - Vector Add (16 floats) - IN-PLACE
- * VPR[dst] = VPR[src] + VPR[dst]
- * Hardware constraint: rd must equal sa
- * Encoding: rs=20, rt=src, rd=dst, sa=dst, fn=3
+ * =============================================================================
+ * Float VPR Arithmetic (rs=20, denorm-range integers work as integer ops)
+ * =============================================================================
+ *
+ * These use fn=3 (ADD) and fn=11 (SUB) — float32 operations.
+ * For denormalized floats (exponent=0, which includes all int values < 2^23),
+ * float ADD/SUB behaves identically to integer ADD/SUB.
+ *
+ * IN-PLACE: VPR[dst] = VPR[src] op VPR[dst] (rd must equal sa)
  */
 #define VPR_ADD(dst, src) do { \
     __asm__ __volatile__( \
@@ -402,18 +407,96 @@ static inline void mxuv3_memset_64(void *dst, uint8_t value, size_t size) {
     ); \
 } while(0)
 
-/*
- * VPR_SUB - Vector Subtract (16 floats) - IN-PLACE
- * VPR[dst] = VPR[src] - VPR[dst]
- * Hardware constraint: rd must equal sa
- * Encoding: rs=20, rt=src, rd=dst, sa=dst, fn=11
- */
 #define VPR_SUB(dst, src) do { \
     __asm__ __volatile__( \
         ".word %0\n sync\n" \
         :: "i"(MXUV3_COP2_INST(20, src, dst, dst, 11)) \
         : "memory" \
     ); \
+} while(0)
+
+/*
+ * =============================================================================
+ * Integer VPR Arithmetic (rs=20, hardware-probed on A1/T41)
+ * =============================================================================
+ *
+ * Discovered via mxuv3_int_arith_probe: rs=20 fn=0..2 are integer ADD
+ * at byte/halfword/word granularity; fn=8..10 are integer SUB.
+ *
+ * Unlike float ADD/SUB (fn=3/11), these are true integer operations
+ * that handle overflow correctly at each element width.
+ *
+ * 3-operand form: VPR[vrd] = VPR[vrs] op VPR[vrp]
+ */
+
+/* ADDUB: 64 x uint8 add (wrapping) */
+#define VPR_ADDUB(vrd, vrs, vrp) do { \
+    __asm__ __volatile__( \
+        ".word %0\n sync\n" \
+        :: "i"(MXUV3_COP2_INST(20, vrs, vrp, vrd, 0)) \
+        : "memory"); \
+} while(0)
+
+/* ADDUH: 32 x uint16 add (wrapping) */
+#define VPR_ADDUH(vrd, vrs, vrp) do { \
+    __asm__ __volatile__( \
+        ".word %0\n sync\n" \
+        :: "i"(MXUV3_COP2_INST(20, vrs, vrp, vrd, 1)) \
+        : "memory"); \
+} while(0)
+
+/* ADDUW: 16 x uint32 add (wrapping) — true integer, not float */
+#define VPR_ADDUW(vrd, vrs, vrp) do { \
+    __asm__ __volatile__( \
+        ".word %0\n sync\n" \
+        :: "i"(MXUV3_COP2_INST(20, vrs, vrp, vrd, 2)) \
+        : "memory"); \
+} while(0)
+
+/* SUBUB: 64 x uint8 subtract (wrapping) */
+#define VPR_SUBUB(vrd, vrs, vrp) do { \
+    __asm__ __volatile__( \
+        ".word %0\n sync\n" \
+        :: "i"(MXUV3_COP2_INST(20, vrs, vrp, vrd, 8)) \
+        : "memory"); \
+} while(0)
+
+/* SUBUH: 32 x uint16 subtract (wrapping) */
+#define VPR_SUBUH(vrd, vrs, vrp) do { \
+    __asm__ __volatile__( \
+        ".word %0\n sync\n" \
+        :: "i"(MXUV3_COP2_INST(20, vrs, vrp, vrd, 9)) \
+        : "memory"); \
+} while(0)
+
+/* SUBUW: 16 x uint32 subtract (wrapping) — true integer, not float */
+#define VPR_SUBUW(vrd, vrs, vrp) do { \
+    __asm__ __volatile__( \
+        ".word %0\n sync\n" \
+        :: "i"(MXUV3_COP2_INST(20, vrs, vrp, vrd, 10)) \
+        : "memory"); \
+} while(0)
+
+/*
+ * =============================================================================
+ * VPR Bitwise Logic (rs=16, hardware-probed on A1/T41)
+ * =============================================================================
+ *
+ * AND: rs=16, fn=0x04;  OR: rs=16, fn=0x0C
+ * 3-operand form: VPR[vrd] = VPR[vrs] op VPR[vrp]
+ */
+#define VPR_AND(vrd, vrs, vrp) do { \
+    __asm__ __volatile__( \
+        ".word %0\n sync\n" \
+        :: "i"(MXUV3_COP2_INST(16, vrs, vrp, vrd, 0x04)) \
+        : "memory"); \
+} while(0)
+
+#define VPR_OR(vrd, vrs, vrp) do { \
+    __asm__ __volatile__( \
+        ".word %0\n sync\n" \
+        :: "i"(MXUV3_COP2_INST(16, vrs, vrp, vrd, 0x0C)) \
+        : "memory"); \
 } while(0)
 
 /*
@@ -463,6 +546,10 @@ static inline void mxuv3_memset_64(void *dst, uint8_t value, size_t size) {
  * VPR[reg] = VPR[reg] - VPR[reg] = 0
  * This is SUB with the same register
  * Encoding: rs=20, fn=11, rt=rd=sa=reg
+ *
+ * WARNING: If VPR_SUB is a floating-point subtract, this will NOT produce
+ * zero for lanes containing NaN (since NaN - NaN = NaN).  Use
+ * mxuv3_zero_vpr() for a guaranteed-zero path via SUMZ + MFSUM.
  */
 #define VPR_ZERO(reg) do { \
     __asm__ __volatile__( \
@@ -502,9 +589,35 @@ static inline void mxuv3_dbl_vpr0(void) {
     VPR_DBL(0);
 }
 
-/* VPR0 = 0 */
+/* VPR0 = 0  (uses float self-subtract; see NaN warning on VPR_ZERO) */
 static inline void mxuv3_zero_vpr0(void) {
     VPR_ZERO(0);
+}
+
+/*
+ * mxuv3_zero_vpr - Reliably zero a VPR register via SUMZ + MFSUM.
+ *
+ * Unlike VPR_ZERO (float self-subtract), this always produces all-zero
+ * regardless of the prior VPR contents (including NaN lanes).
+ *
+ * Requires CU2 already enabled (i.e., at least one COP2 instruction
+ * must have been executed and handled before calling this).
+ *
+ * Uses VSR0 as a scratch sum register.
+ */
+#define MXUV3_ZERO_VPR(vpr) do { \
+    __asm__ __volatile__( \
+        ".word %0\n sync\n"  /* SUMZ(0): VSR0 = 0          */ \
+        ".word %1\n sync\n"  /* MFSUM(vpr, 0): VPR = VSR0  */ \
+        :: "i"(MXUV3_COP2_INST(19, 0, 0, 0, 0x1c)), \
+           "i"(MXUV3_COP2_INST(19, 0, 0, (vpr), 0x0f)) \
+        : "memory" \
+    ); \
+} while (0)
+
+/* Reliable zero for VPR0 — safe even when VPR0 contains NaN */
+static inline void mxuv3_zero_vpr0_reliable(void) {
+    MXUV3_ZERO_VPR(0);
 }
 
 /*
@@ -547,6 +660,33 @@ static inline void mxuv3_zero_vpr0(void) {
     __asm__ __volatile__( \
         ".word %0\n sync\n" \
         :: "i"(0x48000000 | (16 << 21) | ((vrs) << 16) | ((vrp) << 11) | ((vrd) << 6) | 0x16) \
+        : "memory" \
+    ); \
+} while(0)
+
+/* MAXSH - Max Signed Halfword (32 x int16) - for pixel clamping lower bound */
+#define VPR_MAXSH(vrd, vrs, vrp) do { \
+    __asm__ __volatile__( \
+        ".word %0\n sync\n" \
+        :: "i"(0x48000000 | (16 << 21) | ((vrs) << 16) | ((vrp) << 11) | ((vrd) << 6) | 0x1D) \
+        : "memory" \
+    ); \
+} while(0)
+
+/* MINSH - Min Signed Halfword (32 x int16) - for pixel clamping upper bound */
+#define VPR_MINSH(vrd, vrs, vrp) do { \
+    __asm__ __volatile__( \
+        ".word %0\n sync\n" \
+        :: "i"(0x48000000 | (16 << 21) | ((vrs) << 16) | ((vrp) << 11) | ((vrd) << 6) | 0x15) \
+        : "memory" \
+    ); \
+} while(0)
+
+/* MAXSB - Max Signed Byte (64 x int8) - for int8 ReLU */
+#define VPR_MAXSB(vrd, vrs, vrp) do { \
+    __asm__ __volatile__( \
+        ".word %0\n sync\n" \
+        :: "i"(0x48000000 | (16 << 21) | ((vrs) << 16) | ((vrp) << 11) | ((vrd) << 6) | 0x1C) \
         : "memory" \
     ); \
 } while(0)
@@ -810,8 +950,21 @@ static inline uint32_t mxuv3_read_mir(void) { return 0; }
 #define VPR_SQR(reg) ((void)0)
 #define VPR_DBL(reg) ((void)0)
 #define VPR_ZERO(reg) ((void)0)
+/* Integer arithmetic stubs */
+#define VPR_ADDUB(vrd, vrs, vrp) ((void)0)
+#define VPR_ADDUH(vrd, vrs, vrp) ((void)0)
+#define VPR_ADDUW(vrd, vrs, vrp) ((void)0)
+#define VPR_SUBUB(vrd, vrs, vrp) ((void)0)
+#define VPR_SUBUH(vrd, vrs, vrp) ((void)0)
+#define VPR_SUBUW(vrd, vrs, vrp) ((void)0)
+#define VPR_AND(vrd, vrs, vrp) ((void)0)
+#define VPR_OR(vrd, vrs, vrp) ((void)0)
+/* Comparison stubs */
 #define VPR_MAXSW(vrd, vrs, vrp) ((void)0)
 #define VPR_MINSW(vrd, vrs, vrp) ((void)0)
+#define VPR_MAXSH(vrd, vrs, vrp) ((void)0)
+#define VPR_MINSH(vrd, vrs, vrp) ((void)0)
+#define VPR_MAXSB(vrd, vrs, vrp) ((void)0)
 #define VPR_MAXUB(vrd, vrs, vrp) ((void)0)
 #define VPR_MINUB(vrd, vrs, vrp) ((void)0)
 
@@ -823,6 +976,7 @@ static inline uint32_t mxuv3_read_mir(void) { return 0; }
 #define MFSUM(vrd, vsr) ((void)0)
 #define MFSUMZ(vrd, vsr) ((void)0)
 #define VSR_ZERO(vsr) ((void)0)
+#define MXUV3_ZERO_VPR(vpr) ((void)0)
 
 static inline void mxuv3_add_vpr0_vpr1_vpr2(void) {}
 static inline void mxuv3_sub_vpr0_vpr1_vpr2(void) {}
@@ -830,6 +984,7 @@ static inline void mxuv3_mul_vpr0_vpr1_vpr2(void) {}
 static inline void mxuv3_sqr_vpr0(void) {}
 static inline void mxuv3_dbl_vpr0(void) {}
 static inline void mxuv3_zero_vpr0(void) {}
+static inline void mxuv3_zero_vpr0_reliable(void) {}
 
 #define MXUV3_VPR_SIZE      64
 #define MXUV3_VPR_ALIGN     64

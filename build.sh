@@ -47,11 +47,9 @@ echo ""
 echo -e "${GREEN}[2/3] Building examples...${NC}"
 make examples
 
-# Build MXU test
 echo ""
-echo -e "${GREEN}Building MXU test...${NC}"
-${CROSS_COMPILE}gcc -Wall -O2 -Iinclude -Isrc src/mars/mxu_test.c -o build/bin/mxu_test -lm
-echo "Built MXU test: build/bin/mxu_test"
+echo -e "${GREEN}Building MXUv3 microtests...${NC}"
+make mxuv3-tests
 
 echo ""
 echo -e "${GREEN}[3/3] Build complete!${NC}"
