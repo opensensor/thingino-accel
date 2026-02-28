@@ -1013,6 +1013,12 @@ static inline uint32_t mxuv3_read_mir(void) { return 0; }
 #define VPR_SUBUW(vrd, vrs, vrp) ((void)0)
 #define VPR_AND(vrd, vrs, vrp) ((void)0)
 #define VPR_OR(vrd, vrs, vrp) ((void)0)
+/* Shift stubs */
+#define VPR_SLLW_IMM(vrd, vrs, amt) ((void)0)
+#define VPR_SRLW_IMM(vrd, vrs, amt) ((void)0)
+#define VPR_SLLH_VAR(vrd, vrs, vramt) ((void)0)
+#define VPR_SLLW_VAR(vrd, vrs, vramt) ((void)0)
+#define VPR_SRLW_VAR(vrd, vrs, vramt) ((void)0)
 /* Comparison stubs */
 #define VPR_MAXSW(vrd, vrs, vrp) ((void)0)
 #define VPR_MINSW(vrd, vrs, vrp) ((void)0)
